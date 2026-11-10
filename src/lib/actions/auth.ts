@@ -1,6 +1,6 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import type { EmailOtpType } from "@supabase/supabase-js";
@@ -8,6 +8,7 @@ import { fail, fromDbError, ok, type ActionResult } from "@/lib/result";
 import { safeNextPath } from "@/lib/safe-path";
 import { WORKSPACE_COOKIE, getIdentity, signedInWithPassword } from "@/lib/session";
 import { signInFailure } from "@/lib/sign-in-failure";
+import { sessionCookieOptions } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
 const MIN_PASSWORD = 10;
@@ -151,7 +152,27 @@ export async function updatePassword(
   const supabase = await createClient();
   const { error } = await supabase.auth.updateUser({ password: checked.password });
   if (error) return fail(passwordProblem(error, "Request a new link and try again."));
+  await continueWithPassword(supabase, identity.email, checked.password);
   redirect("/overview");
+}
+
+/**
+ * Replaces the session a one-time link created with one that begins with the password that was
+ * just set. A link session may set a password without knowing the current one; that is what
+ * makes an invitation or a reset work, and it should end as soon as it has done so. From then
+ * on this browser is treated like any other signed-in one: replacing the password needs the
+ * current password.
+ */
+async function continueWithPassword(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  email: string,
+  password: string,
+): Promise<void> {
+  if (!email) redirect("/sign-in");
+  await supabase.auth.signOut({ scope: "local" });
+  const again = await supabase.auth.signInWithPassword({ email, password });
+  // The password was saved; if signing in with it fails here, the sign-in page takes over.
+  if (again.error) redirect("/sign-in");
 }
 
 /** Says what is wrong with a password the Auth server refused, when it is the password. */
@@ -224,7 +245,8 @@ export async function acceptInvite(
 ): Promise<ActionResult> {
   const checked = validatePassword(formData);
   if ("error" in checked) return checked.error;
-  if (!(await getIdentity()))
+  const identity = await getIdentity();
+  if (!identity)
     return fail(
       "This invitation link has expired. Ask the workspace owner to invite you again.",
       "unauthorized",
@@ -238,6 +260,7 @@ export async function acceptInvite(
   if (name) await supabase.rpc("update_profile", { p_display_name: name });
   const accepted = await supabase.rpc("accept_pending_invitations");
   if (accepted.error) return fromDbError(accepted.error);
+  await continueWithPassword(supabase, identity.email, checked.password);
   redirect("/overview");
 }
 
@@ -269,7 +292,8 @@ export async function switchWorkspace(workspaceId: string): Promise<void> {
   (await cookies()).set(WORKSPACE_COOKIE, workspaceId, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    // Secure whenever the page is served over HTTPS, like the session cookie.
+    secure: sessionCookieOptions((await headers()).get("x-forwarded-proto")).secure,
     path: "/",
     maxAge: 60 * 60 * 24 * 365,
   });

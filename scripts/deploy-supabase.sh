@@ -85,8 +85,9 @@ export SITE_URL="$site"
 # Say which commit this is, and refuse backend files nobody committed: otherwise production can
 # end up running migrations or functions that exist only on this machine.
 here="$(pwd -P)"
-top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-if [ -n "$top" ] && [ "$(cd "$top" && pwd -P)" = "$here" ]; then
+# "Does git track this very script?" is what tells this checkout apart from a copy that merely
+# sits inside some other repository, and it also works for a project kept in a subdirectory.
+if git ls-files --error-unmatch -- scripts/deploy-supabase.sh >/dev/null 2>&1; then
   commit="$(git rev-parse --short HEAD)"
   # --untracked-files=all: a new migration that was never added must be seen whatever the
   # operator's own git settings say about untracked files.
@@ -103,7 +104,7 @@ if [ -n "$top" ] && [ "$(cd "$top" && pwd -P)" = "$here" ]; then
   else
     echo "==> Deploying the backend from commit $commit"
   fi
-elif [ -e .git ] || [ -n "$top" ]; then
+elif [ -e .git ] || git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   # There is a repository here, or around this directory, but git cannot say what this
   # directory holds (git is missing, the checkout belongs to another user, or this is a copy
   # inside another repository). Not checking would be the same as claiming it is clean.

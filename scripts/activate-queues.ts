@@ -116,6 +116,13 @@ async function checkWake(admin: SupabaseClient): Promise<void> {
 
 async function readSchedules(admin: SupabaseClient): Promise<ScheduleStatus> {
   const read = await admin.rpc("svc_schedule_status");
+  if (read.error?.code === "PGRST202") {
+    fail(
+      "This project's database does not have the schedule report yet: its backend was deployed " +
+        "from an older commit. Run `npm run deploy:supabase` (hosted) or `npm run db:reset` " +
+        "(local) from this checkout first.",
+    );
+  }
   if (read.error) fail(describeDbError(read.error));
   return read.data as unknown as ScheduleStatus;
 }
@@ -134,9 +141,10 @@ async function checkSchedules(admin: SupabaseClient, waitForPlanner: boolean): P
 
   let planner = plannerState(status);
   if (planner.state !== "fresh") {
-    // What counts is a run that happens now. The last recorded one may be from before this
+    // A successful run within the last couple of minutes is taken as proof that pg_cron fires.
+    // Anything else is settled by the next run: the last recorded one may be from before this
     // deployment (it may even be the failure the deployment fixes), so a recorded error is not
-    // the verdict either: wait for the next run and judge that.
+    // the verdict by itself.
     console.log(
       planner.state === "failing"
         ? "The planner's last recorded run failed; waiting for its next run (it runs every minute) …"
@@ -197,7 +205,8 @@ async function main() {
   if (!args.status) {
     const secret = requireEnv(
       "WORKER_SECRET",
-      "Use the same value as the WORKER_SECRET secret of the Edge Functions.",
+      "Use the same value as the WORKER_SECRET secret of the Edge Functions. For a hosted " +
+        "project run `npm run deploy:supabase` instead: it installs one value on both sides.",
     );
     if (secret.length < 32)
       fail("WORKER_SECRET must be at least 32 characters. Generate one with: openssl rand -hex 32");

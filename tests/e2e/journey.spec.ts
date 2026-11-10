@@ -524,6 +524,11 @@ test("an invited member accepts by email and can view and export, but not manage
   await member.getByRole("button", { name: "Accept invitation" }).click();
   await expect(member).toHaveURL(/\/overview/);
   await expect(member.getByText("Member", { exact: true }).first()).toBeVisible();
+  // The invitation link has done its job: from here on this is an ordinary password session,
+  // so replacing the password again needs the current one (the reset form sends such a
+  // session to Settings).
+  await member.goto("/reset-password");
+  await expect(member).toHaveURL(/\/settings\?tab=profile/);
 
   // Members inspect and export; they are not offered management controls.
   await member.goto("/campaigns");
@@ -558,6 +563,9 @@ test("an invited member accepts by email and can view and export, but not manage
   await member.getByLabel("Confirm password").fill(newPassword);
   await member.getByRole("button", { name: "Save password" }).click();
   await expect(member).toHaveURL(/\/overview/);
+  // The same after a reset: the link cannot be used to set yet another password.
+  await member.goto("/reset-password");
+  await expect(member).toHaveURL(/\/settings\?tab=profile/);
   await member.getByRole("button", { name: /Account menu/ }).click();
   await member.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(member).toHaveURL(/\/sign-in/);

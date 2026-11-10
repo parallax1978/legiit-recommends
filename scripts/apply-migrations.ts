@@ -216,11 +216,14 @@ async function main() {
       );
     }
     if (verdict.outcome === "sql_error") {
+      // A file is named only when a rehearsal really fails on it.
       const failure = await locateFailure(api, plan.pending, !hasHistory).catch(() => null);
       fail(
         "Nothing was applied: the whole deployment was rolled back.\n" +
-          (failure ? `${failure.file} failed:\n${failure.reason}` : reasonOf(error)) +
-          "\nFix the file and run the command again.",
+          (failure
+            ? `${failure.file} failed:\n${failure.reason}\nFix the file and run the command again.`
+            : `${reasonOf(error)}\nEvery file applies when rehearsed by itself, so no file can be ` +
+              "named. Run the command again; if it fails the same way, apply with --per-file."),
       );
     }
     fail(
@@ -228,10 +231,12 @@ async function main() {
         "No migration file is at fault, and none of the pending migrations is recorded as applied." +
         (verdict.tooLarge
           ? "\nThe request was too large to send as one: run `npm run db:push:api -- --per-file`."
-          : verdict.mayStillFinish
-            ? "\nThe database may still be working on them. Wait a minute, then run " +
-              "`npm run db:push:api -- --dry-run`: if they are still pending, run the command again."
-            : "\nRun the command again."),
+          : verdict.credentials
+            ? "\nThe access token was not accepted for this project: check SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF."
+            : verdict.mayStillFinish
+              ? "\nThe database may still be working on them. Wait a minute, then run " +
+                "`npm run db:push:api -- --dry-run`: if they are still pending, run the command again."
+              : "\nRun the command again."),
     );
   }
   console.log(`\nApplied ${plan.pending.length} migration(s).\n`);

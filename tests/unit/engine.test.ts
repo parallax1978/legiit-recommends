@@ -140,6 +140,14 @@ describe("database calls from the worker", () => {
     expect(isUnknownOutcome({ code: "PGRST002", message: "schema cache" }, 503)).toBe(true);
     expect(isUnknownOutcome({ code: "57014", message: "statement timeout" }, 500)).toBe(true);
     expect(isUnknownOutcome({ message: "upstream timed out" }, 500)).toBe(true);
+    // A proxy's own error page: no database code, so nothing is known about the call.
+    for (const status of [500, 520, 522, 524, 530]) {
+      expect(isUnknownOutcome({ message: "<html>error</html>" }, status)).toBe(true);
+    }
+    // The database or the API said no: that is an answer, not an unknown.
+    expect(isUnknownOutcome({ code: "PGRST202", message: "no such function" }, 404)).toBe(false);
+    expect(isUnknownOutcome({ message: "Invalid API key" }, 401)).toBe(false);
+    expect(isUnknownOutcome({ message: "Too many requests" }, 429)).toBe(false);
     expect(isUnknownOutcome({ code: "P0001", message: "not allowed" }, 400)).toBe(false);
     expect(isUnknownOutcome({ code: "42501", message: "permission denied" }, 403)).toBe(false);
     expect(isUnknownOutcome({ code: "23505", message: "duplicate key" }, 409)).toBe(false);

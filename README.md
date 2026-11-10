@@ -182,7 +182,8 @@ In order, the script:
 2. applies the migrations. They enable the extensions they need (`pgmq`, `pg_cron`, `pg_net`,
    `supabase_vault`);
 3. installs the worker secret on both sides: as an Edge Function secret (with `SITE_URL`) and
-   in Vault for the database, after first proving that it can write the database's copy;
+   in Vault for the database, after first checking that it can reach the database with the
+   service key;
 4. deploys `worker` and `ops` (bundled on Supabase's side, so no local Docker is needed);
 5. reports the three schedules, fails when one is missing or paused or when the every-minute
    planner is not running, then has the database wake the worker once and fails unless the
@@ -298,8 +299,10 @@ row level security. They belong to the integration's connection between the Supa
 and this Vercel project, so they cannot be deleted one by one under Settings → Environment
 Variables. To remove them, disconnect the project from the resource (Vercel → the project →
 **Integrations** → Supabase → **Manage** → the resource → **Projects**), add the two variables
-in the table above as ordinary Production variables, and redeploy. Disconnect the project only:
-do not delete the resource itself, which is the database. The same connection is what rewrites
+in the table above as ordinary Production variables straight away, redeploy, and check the
+variable list. Disconnecting removes those two as well, so do not push in between: a build
+without them cannot reach Supabase. Disconnect the project only: do not delete the resource
+itself, which is the database. The same connection is what rewrites
 the Auth Site URL on every deployment (see "Auth settings"). If you keep the connection, those
 secrets stay in Vercel: treat access to the Vercel project like access to the database. Never
 add `WORKER_SECRET` or an OpenAI key to Vercel either.
@@ -315,8 +318,10 @@ production branch that only receives pull requests with those checks required.
 
 Deploy from Git rather than with the Vercel CLI from a working directory. `vercel build` packs
 every `.env*` file it finds in the directory into the deployment, and the operator env files
-there hold a Supabase access token. If you must use the CLI, run it in a clean export of the
-commit (`git worktree add` or `git archive`), never in the directory you operate from.
+there hold a Supabase access token. The repository's `.vercelignore` excludes them as a second
+line of defence. If you must use the CLI, run it in a clean export of the commit
+(`git worktree add` or `git archive`), never in the directory you operate from. `ENV_FILE`
+also accepts an absolute path, so the hosted operator file can live outside the repository.
 
 #### Updating a deployment
 

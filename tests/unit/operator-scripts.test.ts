@@ -120,10 +120,14 @@ describe("migration planning (Management API path)", () => {
   describe("a failed apply is judged from what the project records afterwards", () => {
     const pending = ["20260102000000", "20260103000000"];
 
-    it("blames a file only when the database rejected a statement and nothing is recorded", () => {
-      expect(classifyApplyFailure(400, pending, ["20260101000000"])).toEqual({
-        outcome: "sql_error",
-      });
+    it("looks for a failing file when the request was refused and nothing is recorded", () => {
+      // 400 is the Management API's answer to a statement error; an unrecognised status is
+      // settled the same way, by rehearsing.
+      for (const status of [400, 422, 500]) {
+        expect(classifyApplyFailure(status, pending, ["20260101000000"])).toEqual({
+          outcome: "sql_error",
+        });
+      }
     });
 
     it("reports success when the reply was lost but everything is recorded", () => {
@@ -134,22 +138,25 @@ describe("migration planning (Management API path)", () => {
       }
     });
 
-    it("treats gateway and network failures as the request's problem, not a file's", () => {
-      expect(classifyApplyFailure(413, pending, [])).toEqual({
-        outcome: "not_applied",
-        tooLarge: true,
-        mayStillFinish: false,
-      });
-      expect(classifyApplyFailure(429, pending, [])).toEqual({
+    it("treats gateway, network and token failures as the request's problem, not a file's", () => {
+      const notApplied = {
         outcome: "not_applied",
         tooLarge: false,
         mayStillFinish: false,
-      });
+        credentials: false,
+      };
+      expect(classifyApplyFailure(413, pending, [])).toEqual({ ...notApplied, tooLarge: true });
+      expect(classifyApplyFailure(429, pending, [])).toEqual(notApplied);
+      for (const status of [401, 403]) {
+        expect(classifyApplyFailure(status, pending, [])).toEqual({
+          ...notApplied,
+          credentials: true,
+        });
+      }
       // A gateway that gave up waiting, or no reply at all: the database may still be working.
       for (const status of [null, 408, 502, 503, 504]) {
         expect(classifyApplyFailure(status, pending, [])).toEqual({
-          outcome: "not_applied",
-          tooLarge: false,
+          ...notApplied,
           mayStillFinish: true,
         });
       }

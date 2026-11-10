@@ -230,6 +230,9 @@ type RetryPolicy = "conflict" | "safe";
 export function isUnknownOutcome(error: { code?: string; message?: string }, status: number) {
   if (status === 0 || status === 408 || (status >= 502 && status <= 504)) return true;
   if (error.code) return UNKNOWN_OUTCOME_CODES.has(error.code);
+  // A 5xx that carries no database or API error code did not come from the database (a proxy's
+  // 500, 520 to 524, 530): it says nothing about whether the call was carried out.
+  if (status >= 500) return true;
   return /fetch failed|network|timed? ?out|connection (reset|refused|closed)|socket/i.test(
     error.message ?? "",
   );

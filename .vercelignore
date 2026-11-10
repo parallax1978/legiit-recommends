@@ -1,0 +1,4 @@
+# Deployments are built by Vercel from Git, where no env file exists. This file is for the case
+# that someone runs the Vercel CLI in a working directory anyway: the operator env files there
+# hold a Supabase access token and must never be uploaded or packed into a deployment.
+.env*

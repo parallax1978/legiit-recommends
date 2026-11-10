@@ -88,17 +88,23 @@ export function migrationRequestSql(migration: LocalMigration): string {
 export type ApplyFailure =
   /** Every pending migration is recorded after all: the reply was lost, the work was not. */
   | { outcome: "applied" }
-  /** Nothing is recorded and the database rejected a statement: one of the files is at fault. */
+  /**
+   * Nothing is recorded and the request was answered with a refusal that can be a statement
+   * error: look for the file by rehearsing, and blame one only if a rehearsal fails on it.
+   */
   | { outcome: "sql_error" }
-  /** Nothing is recorded and the request failed for a reason that is not in any file. */
-  | { outcome: "not_applied"; tooLarge: boolean; mayStillFinish: boolean }
+  /** Nothing is recorded and the request failed for a reason that is in no file. */
+  | { outcome: "not_applied"; tooLarge: boolean; mayStillFinish: boolean; credentials: boolean }
   /** Some but not all are recorded. One transaction cannot do this: the history was changed. */
   | { outcome: "partial"; recorded: string[] };
 
 /**
  * Decides what to tell the operator after the single-transaction request failed. The history
- * table is the evidence, read again after the failure: the HTTP status only distinguishes "the
- * database said no" (400) from everything a gateway or network can do to a request.
+ * table is the evidence, read again after the failure. The HTTP status only separates what is
+ * clearly not a statement error (no reply, a timeout, a request that is too large or too
+ * frequent, a rejected token) from everything else. The Management API answers a statement
+ * error with 400 ("Failed to run sql query: ERROR: ..."), checked with `select 1/0`; any other
+ * unrecognised status is treated the same way and settled by the rehearsal.
  */
 export function classifyApplyFailure(
   status: number | null,
@@ -111,11 +117,12 @@ export function classifyApplyFailure(
     return { outcome: "applied" };
   }
   if (recorded.length > 0) return { outcome: "partial", recorded };
-  if (status === 400) return { outcome: "sql_error" };
-  return {
-    outcome: "not_applied",
-    tooLarge: status === 413,
-    // No reply, or a gateway that gave up waiting: the database may still be running the batch.
-    mayStillFinish: status === null || status === 408 || (status >= 502 && status <= 504),
-  };
+  // No reply, or a gateway that gave up waiting: the database may still be running the batch.
+  const mayStillFinish = status === null || status === 408 || (status >= 502 && status <= 504);
+  const credentials = status === 401 || status === 403;
+  const tooLarge = status === 413;
+  if (mayStillFinish || credentials || tooLarge || status === 429) {
+    return { outcome: "not_applied", tooLarge, mayStillFinish, credentials };
+  }
+  return { outcome: "sql_error" };
 }
