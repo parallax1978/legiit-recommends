@@ -4,6 +4,8 @@
 // PostgREST, Auth) through the same supabase-js calls the application makes. The only thing
 // simulated is the provider: tests/support/fake-openai.ts stands in for the OpenAI API.
 
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import pg from "pg";
 import { createSupabaseEngineDb } from "@shared/engine/db.ts";
@@ -61,6 +63,26 @@ export async function sql<Row extends object = Record<string, unknown>>(
 ): Promise<Row[]> {
   const result = await db().query(text, params);
   return result.rows as Row[];
+}
+
+/**
+ * The shared secret the local `worker` Edge Function expects, read from the same file the
+ * local stack loads it from. Needed only by tests that let the database call the real function.
+ */
+export function localWorkerSecret(): string {
+  const path = resolve(process.cwd(), "supabase/functions/.env");
+  const line = existsSync(path)
+    ? readFileSync(path, "utf8")
+        .split("\n")
+        .find((entry) => entry.startsWith("WORKER_SECRET="))
+    : undefined;
+  const secret = line?.slice("WORKER_SECRET=".length).trim();
+  if (!secret) {
+    throw new Error(
+      "supabase/functions/.env must define WORKER_SECRET (cp supabase/functions/.env.example supabase/functions/.env, then restart the local stack).",
+    );
+  }
+  return secret;
 }
 
 /** Service-role client: what the Edge Functions use. */
@@ -366,6 +388,30 @@ async function makeTemplates(
   });
 }
 
+/**
+ * Default start of a fixture campaign: a moment ago, so that launching puts it straight into
+ * its first phase.
+ *
+ * Fixture campaigns run all day in UTC, so their conversation slots sit on an even grid from
+ * midnight. A slot between the start and now is due the instant the campaign is launched and
+ * runs in addition to the slots a test then steps through. Starting a full minute ago would
+ * therefore make counts depend on the second a test happened to begin (wrong for one minute
+ * in every hour with hourly slots). The start is kept just after the latest grid point
+ * instead, waiting a moment when the clock is about to reach the next one. Per-minute
+ * schedules are left alone: a slot due at launch is exactly what those tests rely on.
+ */
+async function defaultStart(perDay: number): Promise<Date> {
+  const step = perDay > 0 ? Math.floor(86_400_000 / perDay) : 0;
+  if (step <= 60_000) return new Date(Date.now() - 60_000);
+  let sinceSlot = Date.now() % step;
+  if (step - sinceSlot < 3_000 || sinceSlot < 20) {
+    const untilNext = step - sinceSlot < 3_000 ? step - sinceSlot : 0;
+    await new Promise((done) => setTimeout(done, untilNext + 50));
+    sinceSlot = Date.now() % step;
+  }
+  return new Date(Date.now() - Math.min(60_000, sinceSlot - 10));
+}
+
 /** A complete draft campaign that passes launch validation. */
 export async function createCampaign(
   workspace: Workspace,
@@ -419,7 +465,8 @@ export async function createCampaign(
     probeSetId = saved.probe_set_id;
   }
 
-  const startAt = options.startAt ?? new Date(Date.now() - 60_000);
+  const startAt =
+    options.startAt ?? (await defaultStart(Number(options.config?.conversations_per_day ?? 24)));
   const endAt = options.endAt ?? new Date(startAt.getTime() + 7 * 24 * 3600_000);
   const revisionId = await rpc<string>(user.client, "save_campaign_draft", {
     p_campaign_id: id,

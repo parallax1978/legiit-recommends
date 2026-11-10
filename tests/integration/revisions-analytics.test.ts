@@ -733,8 +733,10 @@ describe("analytics", () => {
   it("applies the retention period to stored text only", async () => {
     const workspace = await createWorkspace();
     const connection = await createConnection(workspace, fake);
+    // No scheduled checks: one would fall due together with the next conversation slot at
+    // some hours of the day, which made the count below depend on when the test ran.
     const campaign = await createCampaign(workspace, connection, {
-      config: { baseline_samples: 2 },
+      config: { baseline_samples: 2, daily_checks: 0 },
     });
     fake.reset();
     await launch(workspace, campaign);

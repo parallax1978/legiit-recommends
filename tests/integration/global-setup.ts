@@ -25,6 +25,31 @@ function stackEnv(): Record<string, string> {
   return values;
 }
 
+/**
+ * Right after `supabase db reset` the database has restarted and the API gateway takes a few
+ * seconds to reconnect, answering 503 until it has. Tests started in that window would fail
+ * for a reason that has nothing to do with them, so wait until a real query gets through.
+ */
+async function waitForApi(apiUrl: string, secret: string): Promise<void> {
+  const deadline = Date.now() + 90_000;
+  let last = "no response";
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${apiUrl}/rest/v1/model_prices?select=model_id&limit=1`, {
+        headers: { apikey: secret, Authorization: `Bearer ${secret}` },
+      });
+      if (response.ok) return;
+      last = `HTTP ${response.status}`;
+    } catch (error) {
+      last = String(error);
+    }
+    await new Promise((done) => setTimeout(done, 1000));
+  }
+  throw new Error(
+    `The local API did not become ready (${last}). Is the stack running and migrated? Try \`npm run db:reset\`.`,
+  );
+}
+
 export default async function setup(): Promise<() => Promise<void>> {
   const values = stackEnv();
   const apiUrl = process.env.LR_TEST_API_URL ?? values.API_URL;
@@ -39,6 +64,7 @@ export default async function setup(): Promise<() => Promise<void>> {
   process.env.LR_TEST_DB_URL = dbUrl;
   process.env.LR_TEST_PUBLISHABLE_KEY = publishable;
   process.env.LR_TEST_SECRET_KEY = secret;
+  await waitForApi(apiUrl, secret);
 
   const client = new pg.Client({ connectionString: dbUrl });
   await client.connect();
