@@ -238,6 +238,7 @@ begin
     'lease_expires_at', p_job.lease_expires_at,
     'attempts', p_job.attempts,
     'max_attempts', p_job.max_attempts,
+    'last_error_class', p_job.last_error_class,
     'poll', p_poll
   );
   select * into v_rev from public.campaign_revisions r where r.id = p_job.revision_id;
@@ -262,6 +263,10 @@ begin
         'last_response_id', v_run.last_response_id, 'last_response_at', v_run.last_response_at,
         'materialized', v_run.steps_total is not null
       ),
+      'background_supported', coalesce((
+        select (m.capabilities ->> 'background')::boolean from public.provider_models m
+        where m.connection_id = p_job.connection_id and m.model_id = v_run.model
+      ), false),
       'turn', case when v_turn.id is null then null else jsonb_build_object(
         'id', v_turn.id, 'step_index', v_turn.step_index, 'step_kind', v_turn.step_kind,
         'rendered_prompt', v_turn.rendered_prompt, 'attempt_count', v_turn.attempt_count,
@@ -313,6 +318,10 @@ begin
         'max_output_tokens', v_check.max_output_tokens, 'execution_mode', v_check.execution_mode,
         'store_response', v_check.store_response, 'attempt_count', v_check.attempt_count
       ),
+      'background_supported', coalesce((
+        select (m.capabilities ->> 'background')::boolean from public.provider_models m
+        where m.connection_id = p_job.connection_id and m.model_id = v_check.model
+      ), false),
       -- Kept locally for the leak guard and for classifying the answer. Never sent to the provider.
       'analysis_target', app_private.target_snapshot(v_rev)
     );

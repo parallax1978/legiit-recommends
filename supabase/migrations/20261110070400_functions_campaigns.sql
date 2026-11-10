@@ -254,6 +254,7 @@ declare
   v_key text;
   v_effort text := p_params ->> 'reasoning_effort';
   v_limit integer := (p_capabilities ->> 'max_output_tokens_limit')::integer;
+  v_verified integer := (p_capabilities ->> 'max_output_tokens_verified')::integer;
   v_support text;
 begin
   for v_key in select jsonb_object_keys(coalesce(p_params, '{}'::jsonb)) loop
@@ -296,6 +297,9 @@ begin
     end if;
     if v_limit is not null and p_max_output_tokens > v_limit then
       return format('Maximum output tokens cannot exceed %s for this model.', v_limit);
+    end if;
+    if v_verified is not null and p_max_output_tokens > v_verified then
+      return format('Output caps above %s tokens have not been verified for this model. An owner can verify it again with a higher cap in Settings.', v_verified);
     end if;
   end if;
 
@@ -1078,6 +1082,7 @@ begin
 
   perform app_private.audit(v_campaign.workspace_id, 'campaign.deleted', 'campaign', p_campaign_id,
     jsonb_build_object('name', v_campaign.name, 'status', v_campaign.status));
+  set constraints all deferred;
   delete from public.campaigns where id = p_campaign_id;
 end;
 $$;

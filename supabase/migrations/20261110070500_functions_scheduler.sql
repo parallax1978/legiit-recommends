@@ -644,6 +644,14 @@ begin
     update public.jobs set status_reason = 'requeued_after_lost_message' where id = v_job.id;
     v_count := v_count + 1;
   end loop;
+
+  -- Ad-hoc requests (model verification, generation, classification) have no job to recover
+  -- them. One left without an outcome means the function running it stopped: its cost is unknown.
+  perform app_private.mark_attempt_uncertain(a.id, 'operation_interrupted',
+    'The operation stopped before recording the outcome of this request.')
+  from public.provider_attempts a
+  where a.job_id is null and a.status = 'started' and a.started_at < p_now - interval '15 minutes';
+
   return v_count;
 end;
 $$;

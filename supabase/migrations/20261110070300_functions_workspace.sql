@@ -388,6 +388,7 @@ begin
     perform app_private.fail('active_campaigns', 'Cancel all active campaigns before deleting the workspace.');
   end if;
   -- Cascades to every tenant record; connection secrets are removed from Vault by trigger.
+  set constraints all deferred;
   delete from public.workspaces where id = p_workspace_id;
 end;
 $$;
@@ -1030,8 +1031,11 @@ language sql
 immutable
 set search_path = ''
 as $$
-  select coalesce(array_agg(distinct btrim(m[1]) order by btrim(m[1])), '{}'::text[])
-  from regexp_matches(coalesce(p_body, ''), '\{\{([^{}]*)\}\}', 'g') as m;
+  select coalesce(array_agg(distinct v.name order by v.name), '{}'::text[])
+  from (
+    select btrim(m[1], E' \t\n\r') collate "C" as name
+    from regexp_matches(coalesce(p_body, ''), '\{\{([^{}]*)\}\}', 'g') as m
+  ) v;
 $$;
 
 create or replace function app_private.allowed_variables(p_kind public.template_kind)

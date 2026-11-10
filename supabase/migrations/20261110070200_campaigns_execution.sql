@@ -918,6 +918,27 @@ insert into app_private.settings (key, value) values
   ('finalize_wait_minutes', '120');
 
 -- ---------------------------------------------------------------------------------------------
+-- Deleting a workspace or a campaign removes many related rows through different cascade paths.
+-- Foreign keys are checked immediately in normal operation, but are deferrable so that those two
+-- deletions can postpone the checks until every cascade has finished.
+-- ---------------------------------------------------------------------------------------------
+
+do $$
+declare
+  r record;
+begin
+  for r in
+    select c.conrelid::regclass as tbl, c.conname
+    from pg_catalog.pg_constraint c
+    join pg_catalog.pg_namespace n on n.oid = c.connamespace
+    where n.nspname = 'public' and c.contype = 'f' and not c.condeferrable
+  loop
+    execute format('alter table %s alter constraint %I deferrable initially immediate', r.tbl, r.conname);
+  end loop;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------------------------
 -- Row level security
 -- ---------------------------------------------------------------------------------------------
 

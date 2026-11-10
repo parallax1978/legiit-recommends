@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.119.0",
+    "openai": "npm:openai@7.53.0",
+    "openai/": "npm:/openai@7.53.0/"
+  },
+  "compilerOptions": {
+    "strict": true
+  }
+}

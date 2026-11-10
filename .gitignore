@@ -48,3 +48,6 @@ next-env.d.ts
 /playwright-report/
 /test-results/
 /tests/.tmp/
+
+# local-only helper files
+/supabase/functions/.sandbox-ca.pem
