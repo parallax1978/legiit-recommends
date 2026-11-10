@@ -60,11 +60,28 @@ export interface UsageTokens {
   output_tokens: number;
 }
 
-function longContextMultipliers(price: PriceRow, inputTokens: number): [number, number] {
+// Costs are computed in exact integer arithmetic so they match the database's numeric results to
+// the last digit: prices in millionths of a dollar per million tokens, multipliers in
+// ten-thousandths, results in hundred-millionths of a dollar (1e-8 USD).
+const UNIT = 100_000_000n;
+
+function micro(price: number | null | undefined): bigint {
+  return BigInt(Math.round((price ?? 0) * 1_000_000));
+}
+
+function tenThousandths(multiplier: number | null | undefined): bigint {
+  return BigInt(Math.round((multiplier ?? 1) * 10_000));
+}
+
+function longContextMultipliers(price: PriceRow, inputTokens: number): [bigint, bigint] {
   if (price.long_context_threshold_tokens != null && inputTokens > price.long_context_threshold_tokens) {
-    return [price.long_context_input_multiplier ?? 1, price.long_context_output_multiplier ?? 1];
+    return [tenThousandths(price.long_context_input_multiplier), tenThousandths(price.long_context_output_multiplier)];
   }
-  return [1, 1];
+  return [10_000n, 10_000n];
+}
+
+function tokens(count: number | null | undefined): bigint {
+  return BigInt(Math.max(0, Math.round(count ?? 0)));
 }
 
 /**
@@ -73,32 +90,36 @@ function longContextMultipliers(price: PriceRow, inputTokens: number): [number, 
  * Rounded up to 1e-8 USD, like the database.
  */
 export function maxCostUsd(price: PriceRow, inputTokens: number, maxOutputTokens: number): number {
-  const inputRate = Math.max(
-    price.input_usd_per_mtok,
-    price.cache_write_30m_usd_per_mtok ?? 0,
-    price.cache_write_12h_usd_per_mtok ?? 0,
-  );
+  const rates = [micro(price.input_usd_per_mtok), micro(price.cache_write_30m_usd_per_mtok), micro(price.cache_write_12h_usd_per_mtok)];
+  const inputRate = rates.reduce((highest, rate) => (rate > highest ? rate : highest), 0n);
   const [inMult, outMult] = longContextMultipliers(price, inputTokens);
-  const microUnits = (inputTokens * inputRate * inMult + maxOutputTokens * price.output_usd_per_mtok * outMult) * 100;
-  return Math.ceil(Number(microUnits.toFixed(6))) / 1e8;
+  const numerator =
+    tokens(inputTokens) * inputRate * inMult + tokens(maxOutputTokens) * micro(price.output_usd_per_mtok) * outMult;
+  return Number((numerator + UNIT - 1n) / UNIT) / 1e8;
 }
 
 /** Usage-based cost estimate from returned token counts. Not an invoice. */
 export function usageCostUsd(price: PriceRow, usage: UsageTokens): number {
-  const input = usage.input_tokens;
-  const cached = Math.min(usage.cached_tokens, input);
-  const cw30 = usage.cache_write_30m_tokens;
-  const cw12 = usage.cache_write_12h_tokens;
-  const cwTotal = Math.max(usage.cache_write_tokens, cw30 + cw12);
+  const input = tokens(usage.input_tokens);
+  const cachedRaw = tokens(usage.cached_tokens);
+  const cached = cachedRaw < input ? cachedRaw : input;
+  const cw30 = tokens(usage.cache_write_30m_tokens);
+  const cw12 = tokens(usage.cache_write_12h_tokens);
+  const cwReported = tokens(usage.cache_write_tokens);
+  const cwTotal = cwReported > cw30 + cw12 ? cwReported : cw30 + cw12;
   const cwOther = cwTotal - cw30 - cw12;
-  const uncached = Math.max(input - cached - cwTotal, 0);
-  const [inMult, outMult] = longContextMultipliers(price, input);
-  const cost =
-    (uncached * price.input_usd_per_mtok +
-      cached * (price.cached_input_usd_per_mtok ?? price.input_usd_per_mtok) +
-      (cw30 + cwOther) * (price.cache_write_30m_usd_per_mtok ?? price.input_usd_per_mtok) +
-      cw12 * (price.cache_write_12h_usd_per_mtok ?? price.input_usd_per_mtok)) *
+  const uncachedRaw = input - cached - cwTotal;
+  const uncached = uncachedRaw > 0n ? uncachedRaw : 0n;
+  const [inMult, outMult] = longContextMultipliers(price, usage.input_tokens);
+  const inputRate = micro(price.input_usd_per_mtok);
+  const orInput = (rate: number | null) => (rate == null ? inputRate : micro(rate));
+  const numerator =
+    (uncached * inputRate +
+      cached * orInput(price.cached_input_usd_per_mtok) +
+      (cw30 + cwOther) * orInput(price.cache_write_30m_usd_per_mtok) +
+      cw12 * orInput(price.cache_write_12h_usd_per_mtok)) *
       inMult +
-    usage.output_tokens * price.output_usd_per_mtok * outMult;
-  return Math.round((cost / 1e6) * 1e8) / 1e8;
+    tokens(usage.output_tokens) * micro(price.output_usd_per_mtok) * outMult;
+  // Round half up, as numeric round() does.
+  return Number((numerator + UNIT / 2n) / UNIT) / 1e8;
 }
