@@ -27,8 +27,13 @@ export type EmailTemplateName = (typeof EMAIL_TEMPLATES)[number];
 export interface AuthSettingsInput {
   siteUrl: string;
   minimumPasswordLength: number;
+  /** Lifetime of one-time email links in seconds, as declared in supabase/config.toml. */
+  linkLifetimeSeconds: number;
   templates: Record<EmailTemplateName, EmailTemplate>;
 }
+
+/** The placeholder the Auth server replaces with the project's Site URL setting. */
+const SITE_URL_PLACEHOLDER = /\{\{\s*\.SiteURL\s*\}\}/g;
 
 /** Field names of the Management API's /config/auth resource. */
 export type AuthConfig = Record<string, unknown>;
@@ -74,6 +79,16 @@ export function desiredAuthSettings(input: AuthSettingsInput): AuthConfig {
     external_anonymous_users_enabled: false,
     external_email_enabled: true,
     password_min_length: input.minimumPasswordLength,
+    // Invitations and workspace grants are addressed to an email address, so an account's
+    // address has to be one its holder can receive mail at: addresses are confirmed, and a
+    // change of address is confirmed from both the old and the new one.
+    mailer_autoconfirm: false,
+    mailer_secure_email_change_enabled: true,
+    // A session alone must not be enough to replace a password. One-time links (invitation,
+    // reset) are exempt on the Auth server, which is what lets them set a password at all.
+    security_update_password_require_current_password: true,
+    // Long enough for an invitation to be opened the next day; the Auth server's own limit.
+    mailer_otp_exp: input.linkLifetimeSeconds,
   };
   for (const name of EMAIL_TEMPLATES) {
     const template = input.templates[name];
@@ -88,7 +103,13 @@ export function desiredAuthSettings(input: AuthSettingsInput): AuthConfig {
       );
     }
     settings[`mailer_subjects_${name}`] = template.subject;
-    settings[`mailer_templates_${name}_content`] = template.content;
+    // The address is written into the email itself. The project's Site URL setting can be
+    // rewritten behind the app's back (a hosting integration does so on every deployment), and
+    // every link would silently follow it.
+    settings[`mailer_templates_${name}_content`] = template.content.replace(
+      SITE_URL_PLACEHOLDER,
+      site,
+    );
   }
   return settings;
 }
@@ -111,10 +132,13 @@ export function describeSetting(value: unknown): string {
 /** Reads the values this app declares in supabase/config.toml without a TOML dependency. */
 export function readAuthDeclarations(configToml: string): {
   minimumPasswordLength: number;
+  linkLifetimeSeconds: number;
   templates: Record<string, { subject: string; contentPath: string }>;
 } {
   const length = /^minimum_password_length\s*=\s*(\d+)\s*$/m.exec(configToml);
   if (!length) throw new Error("supabase/config.toml does not declare minimum_password_length.");
+  const lifetime = /^otp_expiry\s*=\s*(\d+)\s*$/m.exec(configToml);
+  if (!lifetime) throw new Error("supabase/config.toml does not declare [auth.email] otp_expiry.");
   const templates: Record<string, { subject: string; contentPath: string }> = {};
   const section = /^\[auth\.email\.template\.([a-z_]+)\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/gm;
   for (const match of configToml.matchAll(section)) {
@@ -125,5 +149,9 @@ export function readAuthDeclarations(configToml: string): {
       templates[match[1]!] = { subject: subject[1]!, contentPath: path[1]! };
     }
   }
-  return { minimumPasswordLength: Number(length[1]), templates };
+  return {
+    minimumPasswordLength: Number(length[1]),
+    linkLifetimeSeconds: Number(lifetime[1]),
+    templates,
+  };
 }

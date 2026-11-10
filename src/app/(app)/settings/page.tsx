@@ -20,6 +20,7 @@ import {
   InviteForm,
   MemberRowActions,
   ProfileForm,
+  ResendInvitationButton,
   RevokeInvitationButton,
   RoleBadge,
   WorkspaceForm,
@@ -117,7 +118,8 @@ function ProfileTab({ session }: { session: Session }) {
             >
               Forgot your password
             </Link>{" "}
-            to get a reset link by email.
+            to request a reset link by email. If email delivery is not set up for your address,
+            whoever operates this installation can give you a one-time sign-in link instead.
           </p>
         </CardBody>
       </Card>
@@ -323,7 +325,11 @@ async function MembersTab({ session, supabase }: { session: Session; supabase: S
 
       {owner ? (
         <div>
-          <h2 className="text-ink mb-3 text-[15px] font-semibold">Pending invitations</h2>
+          <h2 className="text-ink mb-1 text-[15px] font-semibold">Pending invitations</h2>
+          <p className="text-ink-muted mb-3 text-[13px]">
+            The link in an invitation email works once and for 24 hours. Send the invitation again
+            to give someone a new one.
+          </p>
           {(invitations.data ?? []).length === 0 ? (
             <p className="text-ink-muted text-[13px]">No invitations are waiting to be accepted.</p>
           ) : (
@@ -334,7 +340,7 @@ async function MembersTab({ session, supabase }: { session: Session; supabase: S
                     <Th>Email</Th>
                     <Th>Role</Th>
                     <Th>Sent</Th>
-                    <Th>Expires</Th>
+                    <Th>Withdrawn after</Th>
                     <Th className="text-right">Manage</Th>
                   </tr>
                 </thead>
@@ -352,10 +358,17 @@ async function MembersTab({ session, supabase }: { session: Session; supabase: S
                         <LocalTime value={invitation.expires_at} dateOnly />
                       </Td>
                       <Td className="text-right">
-                        <RevokeInvitationButton
-                          invitationId={invitation.id}
-                          email={invitation.email}
-                        />
+                        <span className="inline-flex flex-wrap justify-end gap-2">
+                          <ResendInvitationButton
+                            workspaceId={workspaceId}
+                            email={invitation.email}
+                            role={invitation.role}
+                          />
+                          <RevokeInvitationButton
+                            invitationId={invitation.id}
+                            email={invitation.email}
+                          />
+                        </span>
                       </Td>
                     </Tr>
                   ))}
@@ -882,7 +895,7 @@ async function StatusTab({ session, supabase }: { session: Session; supabase: Se
       {!status.consumers_activated ? (
         <Callout tone="warn" role="alert" title="Queue consumers are not activated">
           Schedules are planning and queueing work, but nothing wakes the worker that sends
-          requests. Run <code className="font-mono text-xs">npm run queues:activate</code> for this
+          requests. Run <code className="font-mono text-xs">npm run deploy:supabase</code> for this
           Supabase project (see the README, “Queue activation”).
         </Callout>
       ) : null}

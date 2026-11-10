@@ -3,13 +3,16 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { ResetPasswordForm } from "@/components/auth-forms";
 import { Skeleton } from "@/components/ui/card";
-import { getIdentity } from "@/lib/session";
+import { getIdentity, signedInWithPassword } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Choose a new password" };
 
 async function Gate() {
   // Reached through the one-time link in the recovery email, which signs the user in.
-  if (!(await getIdentity())) redirect("/sign-in?error=link_invalid");
+  const identity = await getIdentity();
+  if (!identity) redirect("/sign-in?error=link_invalid");
+  // Someone signed in with a password changes it in Settings, where the current one is asked for.
+  if (signedInWithPassword(identity)) redirect("/settings?tab=profile");
   return <ResetPasswordForm />;
 }
 

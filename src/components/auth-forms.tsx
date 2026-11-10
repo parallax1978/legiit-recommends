@@ -139,6 +139,7 @@ function PasswordFields({ state }: { state: ActionResult | null }) {
           autoComplete="new-password"
           required
           minLength={10}
+          maxLength={72}
         />
       </Field>
       <Field label="Confirm password" htmlFor="confirm" error={errorOf(state, "confirm")}>

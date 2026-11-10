@@ -42,6 +42,13 @@ export function hasRole(role: Role, minimum: Role): boolean {
 interface Identity {
   userId: string;
   email: string;
+  /** How this session was established ("password", "recovery", "invite", "otp", …). */
+  methods: string[];
+}
+
+/** True for a session that began with a password, as opposed to a one-time email link. */
+export function signedInWithPassword(identity: Identity): boolean {
+  return identity.methods.includes("password");
 }
 
 /** The verified identity of the caller, or null. Deduplicated per request. */
@@ -50,7 +57,17 @@ export const getIdentity = cache(async (): Promise<Identity | null> => {
   const { data, error } = await supabase.auth.getClaims();
   const claims = data?.claims;
   if (error || !claims?.sub) return null;
-  return { userId: claims.sub, email: typeof claims.email === "string" ? claims.email : "" };
+  const amr: unknown = (claims as { amr?: unknown }).amr;
+  const methods = Array.isArray(amr)
+    ? amr.map((entry) =>
+        typeof entry === "string" ? entry : String((entry as { method?: unknown })?.method ?? ""),
+      )
+    : [];
+  return {
+    userId: claims.sub,
+    email: typeof claims.email === "string" ? claims.email : "",
+    methods,
+  };
 });
 
 /**

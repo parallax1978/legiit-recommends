@@ -4,7 +4,8 @@ import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { admin, anonClient, closeConnections, resetDatabase, sql, stack } from "./harness.ts";
 
-const SITE = "https://recommends.example";
+// The local stack only: the command refuses an https site with a local project (a mix-up).
+const SITE = "http://localhost:3000";
 
 function bootstrap(args: string[], env: Record<string, string> = {}): string {
   return execFileSync("npx", ["tsx", "scripts/bootstrap-owner.ts", ...args], {
@@ -38,7 +39,7 @@ async function plantUnconfirmed(email: string, password: string): Promise<string
 
 /** What the web app does when the person presses Continue on the link's page. */
 async function openLink(output: string): Promise<{ type: string; signedIn: boolean }> {
-  const url = new URL(/https:\/\/\S+\/auth\/confirm\S+/.exec(output)![0]);
+  const url = new URL(/https?:\/\/\S+\/auth\/confirm\S+/.exec(output)![0]);
   expect(url.origin).toBe(SITE);
   const type = url.searchParams.get("type")!;
   const { data } = await anonClient().auth.verifyOtp({
@@ -129,5 +130,9 @@ describe("owner bootstrap command", () => {
     expect(run(["--email", address("z")], { OWNER_PASSWORD: "short" })).toContain(
       "at least 10 characters",
     );
+    // A hosted site with the local project is almost certainly the wrong env file.
+    expect(
+      run(["--email", address("w"), "--link"], { SITE_URL: "https://recommends.example" }),
+    ).toContain("the Supabase project is the local stack");
   });
 });

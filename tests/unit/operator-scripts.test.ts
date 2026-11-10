@@ -110,6 +110,7 @@ describe("hosted Auth settings", () => {
   const input: AuthSettingsInput = {
     siteUrl: "https://app.example/",
     minimumPasswordLength: 10,
+    linkLifetimeSeconds: 86_400,
     templates: {
       invite: { subject: "Invite", content: link("invite") },
       recovery: { subject: "Reset", content: link("recovery") },
@@ -138,15 +139,30 @@ describe("hosted Auth settings", () => {
       mailer_subjects_invite: "Invite",
       mailer_subjects_recovery: "Reset",
       mailer_subjects_magic_link: "Sign in",
-      mailer_templates_magic_link_content: link("magiclink"),
+      mailer_autoconfirm: false,
+      mailer_secure_email_change_enabled: true,
+      security_update_password_require_current_password: true,
+      mailer_otp_exp: 86_400,
     });
+    // The web app's address is written into every email, so links do not follow the project's
+    // Site URL setting if something rewrites it.
+    expect(desired.mailer_templates_magic_link_content).toBe(
+      '<a href="https://app.example/auth/confirm?token_hash={{ .TokenHash }}&type=magiclink">open</a>',
+    );
+    for (const name of EMAIL_TEMPLATES) {
+      expect(String(desired[`mailer_templates_${name}_content`])).not.toContain("SiteURL");
+    }
     // Nothing outside the fields the app depends on is ever sent.
     expect(Object.keys(desired).sort()).toEqual(
       [
         "disable_signup",
         "external_anonymous_users_enabled",
         "external_email_enabled",
+        "mailer_autoconfirm",
+        "mailer_otp_exp",
+        "mailer_secure_email_change_enabled",
         "password_min_length",
+        "security_update_password_require_current_password",
         "site_url",
         "uri_allow_list",
         ...EMAIL_TEMPLATES.flatMap((name) => [
@@ -206,6 +222,7 @@ describe("hosted Auth settings", () => {
   it("the repository declares every email template, each linking through the web app", () => {
     const declared = readAuthDeclarations(readFileSync("supabase/config.toml", "utf8"));
     expect(declared.minimumPasswordLength).toBe(10);
+    expect(declared.linkLifetimeSeconds).toBe(86_400);
     expect(Object.keys(declared.templates).sort()).toEqual([...EMAIL_TEMPLATES].sort());
     expect(declared.templates.invite).toEqual({
       subject: "You have been invited to Legiit Recommends",
@@ -224,8 +241,11 @@ describe("hosted Auth settings", () => {
     const desired = desiredAuthSettings({
       siteUrl: "https://app.example",
       minimumPasswordLength: declared.minimumPasswordLength,
+      linkLifetimeSeconds: declared.linkLifetimeSeconds,
       templates,
     });
-    expect(String(desired.mailer_templates_recovery_content)).toContain("type=recovery");
+    expect(String(desired.mailer_templates_recovery_content)).toContain(
+      "https://app.example/auth/confirm?token_hash={{ .TokenHash }}&type=recovery",
+    );
   });
 });

@@ -188,7 +188,52 @@ export class DatabaseError extends Error {
 }
 
 /** How many times a call aborted by a deadlock or serialization failure is made in total. */
-const TRANSIENT_RETRIES = 4;
+const CONFLICT_ATTEMPTS = 4;
+
+/**
+ * Waits between repeats of a call whose outcome is unknown, about forty seconds in all. That is
+ * long enough to ride out a gateway restart and well inside the lease a worker holds on its job.
+ */
+const UNKNOWN_OUTCOME_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 8000, 8000, 8000];
+
+/** Postgres says nothing was written: the transaction was a deadlock victim or could not serialize. */
+const CONFLICT_CODES = new Set(["40P01", "40001"]);
+
+/**
+ * The call may or may not have run: the gateway or the connection failed, the database was
+ * restarting or out of connections, or the statement was cut short.
+ */
+const UNKNOWN_OUTCOME_CODES = new Set([
+  "PGRST000",
+  "PGRST001",
+  "PGRST002",
+  "PGRST003",
+  "57014",
+  "57P01",
+  "57P03",
+  "53300",
+  "08000",
+  "08003",
+  "08006",
+]);
+
+/**
+ * How a failed call may be repeated.
+ *   "conflict": only when Postgres reports that nothing was written. For calls that must not
+ *     run twice: claiming a job, reserving budget for a new attempt.
+ *   "safe": also when the outcome is unknown. For calls that end in the same state however
+ *     often they run: recording a result or a failure is keyed to the attempt, and the calls
+ *     that hand a job back are refused once the lease has been given up.
+ */
+type RetryPolicy = "conflict" | "safe";
+
+export function isUnknownOutcome(error: { code?: string; message?: string }, status: number) {
+  if (status === 0 || status === 408 || (status >= 502 && status <= 504)) return true;
+  if (error.code) return UNKNOWN_OUTCOME_CODES.has(error.code);
+  return /fetch failed|network|timed? ?out|connection (reset|refused|closed)|socket/i.test(
+    error.message ?? "",
+  );
+}
 
 function refArgs(ref: LeaseRef) {
   return {
@@ -198,25 +243,51 @@ function refArgs(ref: LeaseRef) {
   };
 }
 
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 /** Database port backed by supabase-js with a service-role (secret) key. */
-// deno-lint-ignore no-explicit-any
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped service-role client
-export function createSupabaseEngineDb(client: SupabaseClient<any, any, any>): EngineDb {
+export function createSupabaseEngineDb(
+  // deno-lint-ignore no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped service-role client
+  client: SupabaseClient<any, any, any>,
+  options: { sleep?: (ms: number) => Promise<void> } = {},
+): EngineDb {
+  const sleep = options.sleep ?? defaultSleep;
+
   /**
-   * Every call is one database transaction. When Postgres aborts it as a deadlock victim or for
-   * a serialization failure, nothing was written, so the same call is simply made again. This
-   * matters most for commits: the provider request has already been paid for and its result
-   * must not be dropped because of a transient lock conflict.
+   * Every call is one database transaction, reached through the API gateway.
+   *
+   * A deadlock victim or serialization failure wrote nothing, so any call is simply made again.
+   * A gateway error, dropped connection or timeout leaves the outcome unknown; calls marked
+   * "safe" are repeated then as well. That matters most once the provider has answered: the
+   * request is already paid for, and one bad second between the function and the database must
+   * not turn its answer into a request "with an unknown outcome".
    */
-  async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
-    for (let attempt = 1; ; attempt += 1) {
-      const { data, error } = await client.rpc(fn, args);
+  async function rpc<T>(
+    fn: string,
+    args: Record<string, unknown>,
+    policy: RetryPolicy = "conflict",
+  ): Promise<T> {
+    let conflicts = 0;
+    let unknown = 0;
+    for (;;) {
+      const { data, error, status } = await client.rpc(fn, args);
       if (!error) return data as T;
-      const transient = error.code === "40P01" || error.code === "40001";
-      if (!transient || attempt >= TRANSIENT_RETRIES) {
-        throw new DatabaseError(fn, error.message, error.code);
+      if (CONFLICT_CODES.has(error.code ?? "") && conflicts < CONFLICT_ATTEMPTS - 1) {
+        conflicts += 1;
+        await sleep(40 * conflicts + Math.random() * 80);
+        continue;
       }
-      await new Promise((resolve) => setTimeout(resolve, 40 * attempt + Math.random() * 80));
+      if (
+        policy === "safe" &&
+        isUnknownOutcome(error, status ?? 0) &&
+        unknown < UNKNOWN_OUTCOME_DELAYS_MS.length
+      ) {
+        await sleep(UNKNOWN_OUTCOME_DELAYS_MS[unknown]!);
+        unknown += 1;
+        continue;
+      }
+      throw new DatabaseError(fn, error.message, error.code);
     }
   }
 
@@ -237,57 +308,65 @@ export function createSupabaseEngineDb(client: SupabaseClient<any, any, any>): E
       }),
 
     async excludeCheck(ref, reason, renderedPrompt) {
-      await rpc("svc_exclude_check", {
-        ...refArgs(ref),
-        p_reason: reason,
-        p_rendered_prompt: renderedPrompt,
-      });
+      await rpc(
+        "svc_exclude_check",
+        { ...refArgs(ref), p_reason: reason, p_rendered_prompt: renderedPrompt },
+        "safe",
+      );
     },
 
     async attemptInFlight(ref, attemptId, responseId, pollInSeconds) {
-      await rpc("svc_attempt_in_flight", {
-        ...refArgs(ref),
-        p_attempt_id: attemptId,
-        p_response_id: responseId,
-        p_poll_in_seconds: pollInSeconds,
-      });
+      await rpc(
+        "svc_attempt_in_flight",
+        {
+          ...refArgs(ref),
+          p_attempt_id: attemptId,
+          p_response_id: responseId,
+          p_poll_in_seconds: pollInSeconds,
+        },
+        "safe",
+      );
     },
 
     async pollPending(ref, attemptId, pollInSeconds) {
-      await rpc("svc_poll_pending", {
-        ...refArgs(ref),
-        p_attempt_id: attemptId,
-        p_poll_in_seconds: pollInSeconds,
-      });
+      await rpc(
+        "svc_poll_pending",
+        { ...refArgs(ref), p_attempt_id: attemptId, p_poll_in_seconds: pollInSeconds },
+        "safe",
+      );
     },
 
     commitResult: (ref, attemptId, result, classification) => {
       // The echo of effective settings is only needed by model verification.
       const { echo: _echo, ...stored } = result;
-      return rpc<CommitResult>("svc_commit_result", {
-        ...refArgs(ref),
-        p_attempt_id: attemptId,
-        p_result: stored,
-        p_classification: classification,
-      });
+      return rpc<CommitResult>(
+        "svc_commit_result",
+        {
+          ...refArgs(ref),
+          p_attempt_id: attemptId,
+          p_result: stored,
+          p_classification: classification,
+        },
+        "safe",
+      );
     },
 
     failAttempt: (ref, attemptId, failure) =>
-      rpc<FailResult>("svc_fail_attempt", {
-        ...refArgs(ref),
-        p_attempt_id: attemptId,
-        p_error: failure,
-      }),
+      rpc<FailResult>(
+        "svc_fail_attempt",
+        { ...refArgs(ref), p_attempt_id: attemptId, p_error: failure },
+        "safe",
+      ),
 
     async releaseWork(ref, delaySeconds) {
-      await rpc("svc_release_work", { ...refArgs(ref), p_delay_seconds: delaySeconds });
+      await rpc("svc_release_work", { ...refArgs(ref), p_delay_seconds: delaySeconds }, "safe");
     },
 
     getConnectionSecret: (connectionId) =>
-      rpc<string | null>("svc_get_connection_secret", { p_connection_id: connectionId }),
+      rpc<string | null>("svc_get_connection_secret", { p_connection_id: connectionId }, "safe"),
 
     async tick(plan) {
-      await rpc("svc_tick", { p_plan: plan });
+      await rpc("svc_tick", { p_plan: plan }, "safe");
     },
   };
 }

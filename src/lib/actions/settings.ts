@@ -119,6 +119,26 @@ export async function inviteMember(
   return result.ok ? { ok: true, message: result.message } : result;
 }
 
+/** Sends a pending invitation again: a fresh email with a fresh link replaces the old one. */
+export async function resendInvitation(
+  workspaceId: string,
+  email: string,
+  role: "owner" | "admin" | "member",
+): Promise<ActionResult> {
+  if (!isUuid(workspaceId) || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return INVALID;
+  const result = await operate<{ outcome: string }>(
+    "members.invite",
+    { workspace_id: workspaceId, email: email.toLowerCase(), role },
+    {
+      success: (data) =>
+        data.outcome === "invited"
+          ? `A new invitation was sent to ${email}.`
+          : `${email} has joined the workspace in the meantime.`,
+    },
+  );
+  return result.ok ? { ok: true, message: result.message } : result;
+}
+
 export async function updateMemberRole(
   workspaceId: string,
   userId: string,

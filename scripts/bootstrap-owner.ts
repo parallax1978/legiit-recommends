@@ -25,7 +25,16 @@
  */
 import { randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { adminClient, describeDbError, env, fail, loadEnvFiles, parseArgs } from "./lib/env";
+import {
+  adminClient,
+  describeDbError,
+  env,
+  fail,
+  isLocalUrl,
+  loadEnvFiles,
+  parseArgs,
+  supabaseUrl,
+} from "./lib/env";
 
 type Account = { id: string; confirmed: boolean } | null;
 
@@ -81,9 +90,18 @@ async function main() {
   }
 
   const admin = await adminClient();
+  // Said first, so a command pointed at the wrong project (the local stack instead of the
+  // hosted one, or the reverse) is noticed before it reports success.
+  console.log(`\nProject: ${supabaseUrl()}`);
   const password = env("OWNER_PASSWORD");
   const siteUrl = (env("SITE_URL") ?? env("NEXT_PUBLIC_SITE_URL") ?? "").replace(/\/$/, "");
   if (wantsLink && !siteUrl) fail("--link needs SITE_URL: the link has to point at the web app.");
+  if (isLocalUrl(supabaseUrl()) && siteUrl.startsWith("https://")) {
+    fail(
+      `SITE_URL is ${siteUrl} but the Supabase project is the local stack (${supabaseUrl()}). ` +
+        "To act on the hosted project, name its env file: ENV_FILE=<file> npm run bootstrap:owner -- …",
+    );
+  }
   if (wantsLink && password) fail("Use either --link or OWNER_PASSWORD, not both.");
   if (password && password.length < 10) fail("OWNER_PASSWORD must be at least 10 characters.");
 
@@ -163,7 +181,7 @@ async function main() {
       "\n  Open this link in a browser, or give it to the owner over a private channel. It works",
     );
     console.log(
-      "  once and expires after the project's email link lifetime (one hour unless changed):\n",
+      "  once and expires after the project's email link lifetime (24 hours as deployed):\n",
     );
     console.log(`  ${link.url}\n`);
   } else {

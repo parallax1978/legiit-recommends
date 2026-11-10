@@ -8,7 +8,7 @@ export default function ForgotPasswordPage() {
     <>
       <h2 className="text-ink text-2xl font-bold">Reset your password</h2>
       <p className="text-ink-muted mt-1 mb-6 text-[13px]">
-        Enter your email and we will send you a link to choose a new password.
+        Enter your email to request a link for choosing a new password.
       </p>
       <ForgotPasswordForm />
     </>

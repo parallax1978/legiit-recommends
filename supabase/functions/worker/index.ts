@@ -24,6 +24,7 @@ import {
   providerBaseUrl,
   runInBackground,
   timingSafeEqual,
+  type AdminClient,
 } from "../_shared/edge/runtime.ts";
 
 function numberEnv(name: string, fallback: number): number {
@@ -31,8 +32,11 @@ function numberEnv(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-async function work(workerId: string): Promise<UnitOutcome | { status: "error"; message: string }> {
-  const db = createSupabaseEngineDb(adminClient());
+async function work(
+  workerId: string,
+  admin: AdminClient,
+): Promise<UnitOutcome | { status: "error"; message: string }> {
+  const db = createSupabaseEngineDb(admin);
   const baseURL = providerBaseUrl();
   try {
     const outcome = await processOneUnit({
@@ -75,6 +79,21 @@ export default {
       return json({ error: "unauthorized" }, 401);
     }
 
+    // A wake-up is accepted only by a worker that can actually claim work: it needs its
+    // service key and a path to the database. Answering on the shared secret alone would
+    // report a working consumer while every unit failed out of sight.
+    let admin: AdminClient;
+    try {
+      admin = adminClient();
+      const ready = await admin.rpc("svc_worker_ready");
+      if (ready.error) throw new Error(ready.error.message);
+    } catch (error) {
+      console.error(
+        JSON.stringify({ event: "worker_not_ready", message: String(error).slice(0, 300) }),
+      );
+      return json({ error: "backend_unreachable" }, 503);
+    }
+
     let wait = false;
     try {
       const body = (await request.json()) as { wait?: boolean };
@@ -84,7 +103,7 @@ export default {
     }
 
     const workerId = crypto.randomUUID();
-    const job = work(workerId);
+    const job = work(workerId, admin);
     if (!wait && runInBackground(job)) {
       return json({ accepted: true, worker: workerId }, 202);
     }

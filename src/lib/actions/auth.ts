@@ -6,10 +6,12 @@ import { z } from "zod";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { fail, fromDbError, ok, type ActionResult } from "@/lib/result";
 import { safeNextPath } from "@/lib/safe-path";
-import { WORKSPACE_COOKIE, getIdentity } from "@/lib/session";
+import { WORKSPACE_COOKIE, getIdentity, signedInWithPassword } from "@/lib/session";
 import { createClient } from "@/lib/supabase/server";
 
 const MIN_PASSWORD = 10;
+// The Auth server hashes with bcrypt, which reads no more than 72 bytes.
+const MAX_PASSWORD = 72;
 const LINK_TYPES: readonly string[] = [
   "invite",
   "recovery",
@@ -88,8 +90,17 @@ export async function requestPasswordReset(
     });
   const supabase = await createClient();
   // The recovery email links to /auth/confirm with a one-time token (see supabase/templates).
-  await supabase.auth.resetPasswordForEmail(email.data);
-  return ok("If an account exists for that address, a reset link is on its way.");
+  const { error } = await supabase.auth.resetPasswordForEmail(email.data);
+  if (error) {
+    // Logged for the operator only. The reply stays the same whatever happened, so it cannot
+    // be used to learn which addresses have an account.
+    console.error(JSON.stringify({ event: "password_reset_email_failed", code: error.code }));
+  }
+  // The built-in email sender only delivers to a few addresses and a few times an hour, so
+  // "on its way" would often be untrue. Say what to do when nothing arrives.
+  return ok(
+    "If an account exists for that address, a reset link has been requested. If nothing arrives within a few minutes, email delivery is not set up for it: ask whoever operates this installation for a one-time sign-in link.",
+  );
 }
 
 function validatePassword(formData: FormData): { password: string } | { error: ActionResult } {
@@ -99,6 +110,13 @@ function validatePassword(formData: FormData): { password: string } | { error: A
     return {
       error: fail(`Use at least ${MIN_PASSWORD} characters.`, "invalid", {
         password: `Use at least ${MIN_PASSWORD} characters.`,
+      }),
+    };
+  }
+  if (new TextEncoder().encode(password).length > MAX_PASSWORD) {
+    return {
+      error: fail(`Use at most ${MAX_PASSWORD} characters.`, "invalid", {
+        password: `Use at most ${MAX_PASSWORD} characters.`,
       }),
     };
   }
@@ -118,17 +136,29 @@ export async function updatePassword(
 ): Promise<ActionResult> {
   const checked = validatePassword(formData);
   if ("error" in checked) return checked.error;
-  if (!(await getIdentity()))
-    return fail("This link has expired. Request a new one.", "unauthorized");
+  const identity = await getIdentity();
+  if (!identity) return fail("This link has expired. Request a new one.", "unauthorized");
+  // This form is for people who arrived through a one-time link. Someone who signed in with
+  // a password has to give it again, which the form in Settings asks for.
+  if (signedInWithPassword(identity)) {
+    return fail(
+      "To change your password while signed in, use Settings → Your account.",
+      "current_password_required",
+    );
+  }
   const supabase = await createClient();
   const { error } = await supabase.auth.updateUser({ password: checked.password });
-  if (error)
-    return fail(
-      error.message.includes("different")
-        ? "Choose a password you have not used before."
-        : "The password could not be updated. Request a new link and try again.",
-    );
+  if (error) return fail(passwordProblem(error, "Request a new link and try again."));
   redirect("/overview");
+}
+
+/** Says what is wrong with a password the Auth server refused, when it is the password. */
+function passwordProblem(error: { code?: string; message: string }, otherwise: string): string {
+  if (error.code === "weak_password") return error.message;
+  if (error.code === "same_password" || error.message.includes("different")) {
+    return "Choose a password you have not used before.";
+  }
+  return `The password could not be saved. ${otherwise}`;
 }
 
 /**
@@ -168,14 +198,12 @@ export async function changePassword(
       current_password: "Your current password is not correct.",
     });
   }
-  const { error } = await supabase.auth.updateUser({ password: checked.password });
-  if (error) {
-    return fail(
-      error.message.includes("different")
-        ? "Choose a password you have not used before."
-        : "The password could not be changed. Try again.",
-    );
-  }
+  // The current password travels with the change, so the Auth server can insist on it too.
+  const { error } = await supabase.auth.updateUser({
+    password: checked.password,
+    current_password: current,
+  });
+  if (error) return fail(passwordProblem(error, "Try again."));
   return ok("Password changed.");
 }
 
@@ -193,8 +221,9 @@ export async function acceptInvite(
   const supabase = await createClient();
   const name = String(formData.get("display_name") ?? "").trim();
   const { error } = await supabase.auth.updateUser({ password: checked.password });
-  if (error)
-    return fail("The password could not be saved. Ask the workspace owner to invite you again.");
+  if (error) {
+    return fail(passwordProblem(error, "Ask the workspace owner to invite you again."));
+  }
   if (name) await supabase.rpc("update_profile", { p_display_name: name });
   const accepted = await supabase.rpc("accept_pending_invitations");
   if (accepted.error) return fromDbError(accepted.error);

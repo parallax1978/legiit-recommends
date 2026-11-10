@@ -11,10 +11,13 @@
  *     integration for preview deployments are removed: the app never redirects to them, and a
  *     wildcard on a shared domain can be matched by a host somebody else registers.
  *   - Sign-ups disabled and anonymous sign-ins off: access is by invitation only.
- *   - Minimum password length, as declared in supabase/config.toml.
+ *   - Minimum password length and the lifetime of email links, as declared in
+ *     supabase/config.toml. Email addresses must be confirmed, and replacing a password needs
+ *     the current one (one-time links are exempt).
  *   - Every email template that carries a link (invite, recovery, sign-in link, confirmation,
  *     email change), from supabase/templates. All of them link to the web app, never to the
- *     Auth server with a redirect chosen by whoever requested the email.
+ *     Auth server with a redirect chosen by whoever requested the email, and the web app's
+ *     address is written into them rather than taken from the Site URL setting.
  *
  * It deliberately does not push supabase/config.toml as a whole: that file carries local
  * development defaults (email throttling, MFA, pooler and storage settings) that would change a
@@ -64,6 +67,7 @@ async function main() {
     desired = desiredAuthSettings({
       siteUrl,
       minimumPasswordLength: declared.minimumPasswordLength,
+      linkLifetimeSeconds: declared.linkLifetimeSeconds,
       templates,
     });
   } catch (error) {

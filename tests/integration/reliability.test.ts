@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FakeOpenAI } from "../support/fake-openai.ts";
+import { createSupabaseEngineDb } from "@shared/engine/db.ts";
+import { processOneUnit } from "@shared/engine/worker.ts";
 import {
   admin,
   campaignStatus,
@@ -8,6 +10,7 @@ import {
   createConnection,
   createWorkspace,
   drain,
+  engineDeps,
   expectDbError,
   launch,
   makeQueueVisible,
@@ -339,6 +342,56 @@ describe("crash recovery", () => {
     const current = await job(campaign.id);
     expect(queue).toEqual([{ job_id: current.id, visible: true }]);
     expect(current).toMatchObject({ status: "queued", attempts: 0 });
+  });
+
+  it("keeps a paid answer, booked once, when the reply to its commit is lost on the way back", async () => {
+    const { campaign } = await oneQueuedConversation();
+    // The database commits the first answer, but the worker never hears so: the gateway fails
+    // after the call ran. The worker cannot tell that from a call that never arrived, so it
+    // repeats it. The repeat must find the work already done rather than do it twice.
+    const real = admin();
+    let lost = 0;
+    const flaky = {
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        const response = await real.rpc(fn, args);
+        if (fn === "svc_commit_result" && lost === 0 && !response.error) {
+          lost += 1;
+          return { data: null, error: { code: "", message: "TypeError: fetch failed" }, status: 0 };
+        }
+        return response;
+      },
+    };
+    const outcome = await processOneUnit({
+      ...engineDeps(fake),
+      db: createSupabaseEngineDb(flaky as never, { sleep: async () => {} }),
+    });
+    expect(lost).toBe(1);
+    expect(outcome.status).toBe("processed");
+
+    await drain(fake);
+    expect(await run(campaign.id)).toMatchObject({ status: "completed", steps_completed: 3 });
+    // Three turns, three requests, each recorded and paid for exactly once, none left unknown.
+    expect(fake.responseRequests()).toHaveLength(3);
+    expect((await attempts(campaign.id)).map((attempt) => attempt.status)).toEqual([
+      "succeeded",
+      "succeeded",
+      "succeeded",
+    ]);
+    expect((await reservations(campaign.id)).map((reservation) => reservation.status)).toEqual([
+      "settled",
+      "settled",
+      "settled",
+    ]);
+    const [ledger] = await sql<{ entries: number; attempts: number }>(
+      "select count(*)::int as entries, count(distinct attempt_id)::int as attempts from public.usage_ledger where campaign_id = $1",
+      [campaign.id],
+    );
+    expect(ledger).toEqual({ entries: 3, attempts: 3 });
+    const [turns] = await sql<{ n: number }>(
+      "select count(*)::int as n from public.run_turns where campaign_id = $1 and status = 'completed'",
+      [campaign.id],
+    );
+    expect(turns!.n).toBe(3);
   });
 
   it("re-sends a queue message that went missing", async () => {

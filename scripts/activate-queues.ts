@@ -90,9 +90,11 @@ async function checkWake(admin: SupabaseClient): Promise<void> {
         "Run `npm run deploy:supabase` to install one value on both sides."
       : status === 404
         ? "The worker function was not found at that address. Deploy it (`npm run deploy:supabase`) or correct the URL."
-        : status !== null
-          ? "Look at the worker function's logs in the Supabase dashboard."
-          : "The worker could not be reached from the database. Check the URL above.";
+        : status === 503
+          ? "The worker started but could not reach the database with its service key (for a local stack: apply the migrations with `npm run db:reset`). See the worker function's logs."
+          : status !== null
+            ? "Look at the worker function's logs in the Supabase dashboard."
+            : "The worker could not be reached from the database. Check the URL above.";
   fail(
     `Wake-up check failed: ${status !== null ? `the worker answered HTTP ${status}` : (result.error ?? (result.timed_out ? "the request timed out" : "no response"))}.\n` +
       `${hint}\nUntil this passes, launched campaigns queue work that nothing picks up.`,
@@ -103,6 +105,7 @@ async function main() {
   loadEnvFiles();
   const args = parseArgs(process.argv.slice(2));
   const admin = await adminClient();
+  console.log(`\nProject: ${supabaseUrl()}`);
 
   if (!args.status) {
     const secret = requireEnv(

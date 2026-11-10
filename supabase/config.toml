@@ -1,4 +1,11 @@
 #:schema https://supabase.com/schemas/config/v1.json
+#
+# LOCAL DEVELOPMENT ONLY. Do not run `supabase config push` with this file: it holds defaults
+# for the local stack (email throttling, pooler and storage settings) that would loosen a
+# hosted project. The hosted Auth settings this app needs are applied, and only those, by
+# `npm run auth:configure` (part of `npm run deploy:supabase`), which reads the values marked
+# below: minimum_password_length, otp_expiry and the email templates.
+#
 # For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
@@ -228,18 +235,20 @@ enabled = true
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+# On, as on the hosted project: invitations and workspace grants trust a confirmed address.
+enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # If enabled, users will need to provide their current password to change their password, unless
 # they signed in with a one-time password, magic link, or recovery link.
-# require_current_password = true
+require_current_password = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
 # Number of characters used in the email OTP.
 otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
-otp_expiry = 3600
+# One day, so an invitation can be opened the next morning. Also applied to the hosted project.
+otp_expiry = 86400
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]

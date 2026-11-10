@@ -92,6 +92,21 @@ const MISSING_KEY_FAILURE = {
   latency_ms: 0,
 };
 
+/** Our own backend failed before the provider was contacted. Retried like a network problem. */
+const NOT_SENT_FAILURE = {
+  class: "connection_error" as const,
+  uncertain: false,
+  http_status: null,
+  type: null,
+  code: "not_sent",
+  param: null,
+  message: "The request was not sent.",
+  retry_after_ms: null,
+  provider_request_id: null,
+  response_id: null,
+  latency_ms: 0,
+};
+
 /** Selects one saved wording per step and renders the exact prompts for a new run. */
 export function planRun(unit: Unit): RunPlan {
   const run = unit.run!;
@@ -179,7 +194,20 @@ async function sendAndSettle(
 
   await deps.faults?.afterBeginAttempt?.(unit, begin.attempt_id);
 
-  const provider = await providerFor(deps, unit);
+  let provider: ProviderClient | null;
+  try {
+    provider = await providerFor(deps, unit);
+  } catch (error) {
+    // The key could not be read, so nothing was sent. Say so: an attempt left as "started"
+    // would later be treated as a request that may have been billed.
+    const failed = await deps.db.failAttempt(refOf(unit), begin.attempt_id, {
+      ...NOT_SENT_FAILURE,
+      message: `The request was not sent: the stored API key could not be read (${String(
+        error instanceof Error ? error.message : error,
+      ).slice(0, 200)}).`,
+    });
+    return `failed:connection_error:${failed.action ?? "recorded"}`;
+  }
   if (!provider) {
     const failed = await deps.db.failAttempt(refOf(unit), begin.attempt_id, MISSING_KEY_FAILURE);
     return `failed:invalid_credentials:${failed.action ?? "recorded"}`;
@@ -303,8 +331,32 @@ async function handlePoll(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
     result,
   });
 
+  const age = Date.now() - Date.parse(poll.started_at);
+  // A response whose status cannot be learned is not followed for ever. Without this, a key
+  // that was revoked or removed while a response was running would keep its job polling
+  // every minute indefinitely, with its budget reservation held.
+  const giveUp = async (reason: string): Promise<UnitOutcome> => {
+    const failed = await deps.db.failAttempt(refOf(unit), poll.attempt_id, {
+      class: "timeout",
+      uncertain: true,
+      http_status: null,
+      type: null,
+      code: "background_unreachable",
+      param: null,
+      message: `The status of the background response could not be checked for ${Math.round(
+        age / 60_000,
+      )} minutes (${reason}). It may still have completed and been billed.`,
+      retry_after_ms: null,
+      provider_request_id: null,
+      response_id: poll.response_id,
+      latency_ms: age,
+    });
+    return done(`failed:timeout:${failed.action ?? "recorded"}`);
+  };
+
   const provider = await providerFor(deps, unit);
   if (!provider) {
+    if (age > deps.config.backgroundMaxMs) return giveUp("no API key is stored");
     await deps.db.pollPending(refOf(unit), poll.attempt_id, 60);
     return done("poll_deferred:no_credentials");
   }
@@ -326,8 +378,10 @@ async function handlePoll(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
       });
       return done(`failed:provider_failed:${failed.action ?? "recorded"}`);
     }
-    // A failed status check says nothing about the response. Keep it in flight and look again.
+    // A failed status check says nothing about the response. Keep it in flight and look again,
+    // but only for as long as a background response is allowed to run at all.
     if (failure.response_id === null) {
+      if (age > deps.config.backgroundMaxMs) return giveUp(failure.class);
       await deps.db.pollPending(
         refOf(unit),
         poll.attempt_id,
@@ -338,7 +392,6 @@ async function handlePoll(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
   }
 
   if (outcome.kind === "pending") {
-    const age = Date.now() - Date.parse(poll.started_at);
     if (age > deps.config.backgroundMaxMs) {
       const canceled = await provider.cancelResponse(poll.response_id, {
         timeoutMs: deps.config.shortTimeoutMs,

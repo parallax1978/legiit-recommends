@@ -18,6 +18,7 @@ import {
   deleteWorkspace,
   inviteMember,
   removeMember,
+  resendInvitation,
   revokeInvitation,
   setEmergencyStop,
   updateMemberRole,
@@ -46,6 +47,7 @@ export function ChangePasswordForm() {
         autoComplete="new-password"
         hint="At least 10 characters."
         minLength={10}
+        maxLength={72}
         required
       />
       <TextField
@@ -299,6 +301,31 @@ export function MemberRowActions({
         {isSelf ? "Leave" : "Remove"}
       </ActionButton>
     </div>
+  );
+}
+
+export function ResendInvitationButton({
+  workspaceId,
+  email,
+  role,
+}: {
+  workspaceId: string;
+  email: string;
+  role: Role;
+}) {
+  return (
+    <ActionButton
+      action={() => resendInvitation(workspaceId, email, role)}
+      size="sm"
+      variant="secondary"
+      confirm={{
+        title: "Send this invitation again?",
+        description: `${email} gets a new email. The link in the earlier one stops working.`,
+        confirmLabel: "Send again",
+      }}
+    >
+      Send again
+    </ActionButton>
   );
 }
 

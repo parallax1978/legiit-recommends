@@ -76,6 +76,12 @@ fi
 export WORKER_SECRET
 export SITE_URL="$site"
 
+# Later commands must name the same env file, or they act on whatever .env.operator holds.
+run_prefix=""
+if [ -n "${ENV_FILE:-}" ]; then
+  run_prefix="ENV_FILE=$ENV_FILE "
+fi
+
 supabase() { npx --no-install supabase "$@"; }
 tsx() { npx --no-install tsx "$@"; }
 
@@ -122,8 +128,8 @@ cat <<DONE
 Backend deployed to $ref.
 
 Next:
-  1. Bootstrap the first owner:   npm run bootstrap:owner -- --email you@example.com
-                                  (add --link to get a one-time link when no SMTP is configured)
+  1. Bootstrap the first owner:   ${run_prefix}npm run bootstrap:owner -- --email you@example.com --link
+                                  (prints a one-time link; no email delivery needed)
   2. Deploy the web app:          connect the repository in Vercel, or npm run deploy:vercel
   3. Sign in at $site/sign-in, name the workspace, then add the OpenAI key under Settings.
 No campaign runs until an owner or admin launches one.

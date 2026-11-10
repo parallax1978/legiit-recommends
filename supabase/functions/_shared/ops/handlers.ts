@@ -349,6 +349,11 @@ export async function verifyModel(
     onUnused: (key) => finish(key, { status: "unused" }),
   });
 
+  // Out of time is not a verdict about the model: leave whatever was recorded before.
+  if (result.inconclusive) {
+    return fail("verification_incomplete", result.error ?? "Verification did not finish.");
+  }
+
   const saved = await ctx.admin.rpc("svc_save_model_verification", {
     p_connection_id: connection.id,
     p_actor: ctx.userId,

@@ -200,26 +200,35 @@ sides each time, so nobody has to keep it.
 #### Auth settings
 
 `npm run auth:configure` (step 1 of the deploy; `-- --check` only reports differences) sets
-exactly these and leaves every other project setting alone. It does not push
-`supabase/config.toml`, which holds local-development defaults.
+exactly these and leaves every other project setting alone. Do not run `supabase config push`:
+`supabase/config.toml` holds local-development defaults.
 
-- **Site URL**: your `SITE_URL`. Email links are built from it, so it must be the address people
-  can open. If Vercel's integration filled in a deployment alias that sits behind Vercel's own
-  login, this replaces it.
-- **Redirect URLs**: `SITE_URL/**` and nothing else. Entries an integration added for preview
-  deployments are removed: the app never redirects to them, and a wildcard on a shared domain
-  such as `*.vercel.app` can be matched by a host somebody else registers.
 - **Sign-ups disabled**, anonymous sign-ins off. People join only by invitation.
-- **Minimum password length** 10.
+- **Email addresses must be confirmed**, and a change of address is confirmed from both the old
+  and the new one. Invitations and workspace grants are addressed to an email address, so an
+  account's address has to be one its holder can receive mail at.
+- **Minimum password length** 10, and **replacing a password needs the current one**. One-time
+  links (invitation, reset) are exempt, which is what lets them set a password.
+- **Email links live for 24 hours** and work once.
 - **Every email template that carries a link** (invitation, password reset, sign-in link,
   confirmation, email change) from `supabase/templates/`. They all point to
-  `SITE_URL/auth/confirm?token_hash=…`, a page of the web app. The one-time token is used only
-  when the person presses **Continue** there, so mail scanners and chat previews that fetch the
-  link cannot use it up.
+  `SITE_URL/auth/confirm?token_hash=…`, a page of the web app, and your `SITE_URL` is written
+  into the emails themselves. The one-time token is used only when the person presses
+  **Continue** on that page, so mail scanners and chat previews that fetch the link cannot use
+  it up.
+- **Site URL** = `SITE_URL` and **Redirect URLs** = `SITE_URL/**` only.
 
-Supabase's built-in email sender is rate-limited and only delivers to members of the project's
-Supabase organization. Configure your own SMTP provider under **Authentication → Emails** before
-inviting other people. Until then use one-time links (next step).
+Vercel's Supabase integration rewrites the last two on every deployment: it puts a deployment
+alias back as the Site URL (one that sits behind Vercel's own login) and re-adds wildcard
+redirect entries for preview deployments. That no longer affects this app: no email takes its
+address from the Site URL, and no emailed link carries a redirect, so the redirect list is
+never consulted. `auth:configure -- --check` will report those two as different after each
+deployment; the next `deploy:supabase` sets them back.
+
+Supabase's built-in email sender is limited to a couple of emails an hour and only delivers to
+members of the project's Supabase organization. Until you configure your own SMTP provider
+under **Authentication → Emails**, invitations to other people and password-reset emails will
+usually not arrive. The owner does not need email at all (next step); inviting anyone else does.
 
 ### 2. First owner
 
@@ -227,11 +236,19 @@ inviting other people. Until then use one-time links (next step).
 npm run bootstrap:owner -- --email you@example.com --link
 ```
 
+(With a separate env file for the hosted project, prefix it the same way as the deploy:
+`ENV_FILE=.env.operator.production npm run bootstrap:owner -- …`. The command prints which
+project it is acting on.)
+
 This grants that address the right to create one workspace and prints a one-time link. Open it
 in a browser to choose a password, then name the workspace. Nothing is emailed. Without
 `--link` the command sends a Supabase invitation email instead (needs working email delivery);
 with `OWNER_PASSWORD` set in the environment it creates the account with that password, which
 is how local development and the tests do it.
+
+This is for owners only: every address it is run for may create its own workspace. Other people
+join an existing workspace through an invitation from **Settings → Members**, which needs
+working email delivery.
 
 The same command with `--link` is the way back in for an owner who is locked out: for an
 account that already has a password, the link resets it. An account that already existed for
@@ -299,9 +316,11 @@ a key only as a masked hint such as `sk-…ab12`. Replacing a key takes effect i
 
 ## Queue activation
 
-Cron always plans and queues work for launched campaigns. `npm run queues:activate` stores, in
-Vault, the URL of the `worker` function and the shared secret, which lets the dispatcher wake it.
-`deploy:supabase` does this for you.
+Cron always plans and queues work for launched campaigns. The dispatcher can wake the `worker`
+function once Vault holds the function's URL and the shared secret. For a hosted project
+`npm run deploy:supabase` installs that secret on both sides (the function and Vault) and never
+shows it, so there is nothing to keep. `npm run queues:activate` stores a secret you supply; it
+is what the local stack uses, with the value from `supabase/functions/.env`.
 
 Stored settings prove nothing by themselves, so activation ends by sending one wake-up from the
 database and reporting the worker's answer. The same check on its own:
@@ -310,9 +329,10 @@ database and reporting the worker's answer. The same check on its own:
 npm run queues:activate -- --status
 ```
 
-It fails with the reason (for example HTTP 401 when the secret in the database and the
-function's secret differ) instead of leaving work queued with nothing picking it up. A wake-up
-with nothing queued makes the worker look for work, find none and stop.
+It fails with the reason (HTTP 401 when the secret in the database and the function's secret
+differ, 503 when the worker cannot reach the database with its service key) instead of leaving
+work queued with nothing picking it up. A wake-up with nothing queued makes the worker look for
+work, find none and stop.
 
 **Settings → Operational status** shows the scheduler heartbeat, whether recent wake-ups were
 accepted by the worker, queue backlog, stalled leases, connection state, provider errors and
@@ -335,7 +355,8 @@ npx supabase db dump --remote=<project-ref> --password "$SUPABASE_DB_PASSWORD" -
 ```
 
 - Vault secrets are encrypted with a key Supabase manages for the project. After restoring into
-  a **different** project, re-enter each OpenAI key in Settings and run `npm run queues:activate`.
+  a **different** project, re-enter each OpenAI key in Settings and run
+  `npm run deploy:supabase` for that project.
 - From the app, each campaign can be exported as CSV (results, fresh checks, usage) and JSON
   (transcripts, configuration). Exports respect workspace membership, escape spreadsheet
   formulas and contain no secrets.
@@ -344,21 +365,21 @@ npx supabase db dump --remote=<project-ref> --password "$SUPABASE_DB_PASSWORD" -
 
 ## Recovery
 
-| Situation                           | What to do                                                                                                                                                                        |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stop all spending now               | **Settings → Workspace → Emergency stop** (owner). Requests already sent finish and are recorded. Release it to resume.                                                           |
-| A campaign was paused automatically | The provider rejected its model or settings. Open the campaign for the reason, fix it under **Edit**, apply the change, then **Resume**.                                          |
-| Connection "needs attention"        | Invalid key or exhausted quota. Fix it at OpenAI or replace the key, then **Test connection**: a successful test releases the held work.                                          |
-| Jobs in the review queue            | **Settings → Operational status → Review queue → Retry**. A retry continues from the last saved turn; completed turns are never sent again.                                       |
-| Conversation "expired"              | The provider no longer has the stored response the next turn needs. It is not replayed silently: use **Restart as a new conversation** on its page.                               |
-| Request with an unknown outcome     | A timeout or dropped connection after sending. Its reservation stays held. An owner decides under **Usage**: count as spent, or release after checking the provider's usage page. |
-| Worker stopped mid-request          | Nothing to do. The lease expires, the attempt is marked unknown or retried, and the job resumes from the last saved state.                                                        |
-| Budget reached                      | Raise the campaign or connection limit (or wait for the next day). Waiting jobs continue; skipped slots follow the campaign's missed-slot setting.                                |
-| "Queue consumers are not activated" | Run `npm run queues:activate`.                                                                                                                                                    |
-| An owner cannot sign in             | `npm run bootstrap:owner -- --email <their address> --link` prints a one-time link that lets them choose a new password. No email is needed.                                      |
-| An email link says it has expired   | Links work once and for a limited time. Send a new invitation or reset email; for an owner without email delivery use the one-time link above.                                    |
-| A migration fails during a deploy   | Nothing was applied: the deployment is one transaction. The command names the failing file; fix it and run `npm run deploy:supabase` again.                                       |
-| Scheduler heartbeat is stale        | Check that the `lr-plan` and `lr-dispatch` jobs exist and are active (Dashboard → Integrations → Cron). `npm run queues:activate` puts back any schedule that was removed.        |
+| Situation                           | What to do                                                                                                                                                                              |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop all spending now               | **Settings → Workspace → Emergency stop** (owner). Requests already sent finish and are recorded. Release it to resume.                                                                 |
+| A campaign was paused automatically | The provider rejected its model or settings. Open the campaign for the reason, fix it under **Edit**, apply the change, then **Resume**.                                                |
+| Connection "needs attention"        | Invalid key or exhausted quota. Fix it at OpenAI or replace the key, then **Test connection**: a successful test releases the held work.                                                |
+| Jobs in the review queue            | **Settings → Operational status → Review queue → Retry**. A retry continues from the last saved turn; completed turns are never sent again.                                             |
+| Conversation "expired"              | The provider no longer has the stored response the next turn needs. It is not replayed silently: use **Restart as a new conversation** on its page.                                     |
+| Request with an unknown outcome     | A timeout or dropped connection after sending. Its reservation stays held. An owner decides under **Usage**: count as spent, or release after checking the provider's usage page.       |
+| Worker stopped mid-request          | Nothing to do. The lease expires, the attempt is marked unknown or retried, and the job resumes from the last saved state.                                                              |
+| Budget reached                      | Raise the campaign or connection limit (or wait for the next day). Waiting jobs continue; skipped slots follow the campaign's missed-slot setting.                                      |
+| "Queue consumers are not activated" | Hosted: run `npm run deploy:supabase` (it installs one worker secret on both sides). Local stack: `npm run queues:activate`.                                                            |
+| An owner cannot sign in             | `npm run bootstrap:owner -- --email <their address> --link` (with `ENV_FILE=…` for the hosted project) prints a one-time link that lets them choose a new password. No email is needed. |
+| An email link says it has expired   | Links work once and for a limited time. Send a new invitation or reset email; for an owner without email delivery use the one-time link above.                                          |
+| A migration fails during a deploy   | Nothing was applied: the deployment is one transaction. The command names the failing file; fix it and run `npm run deploy:supabase` again.                                             |
+| Scheduler heartbeat is stale        | Check that the `lr-plan` and `lr-dispatch` jobs exist and are active (Dashboard → Integrations → Cron). `npm run deploy:supabase` puts back any schedule that was removed.              |
 
 Editing a launched campaign never rewrites history: changes are saved as pending, and applying
 them creates a new immutable revision used only for future work. Changing the fresh-check

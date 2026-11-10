@@ -79,6 +79,11 @@ export interface ProbeResult {
   verified: boolean;
   capabilities: CapabilityProfile | null;
   error: string | null;
+  /**
+   * True when verification ran out of time before it could conclude anything. Nothing should
+   * be recorded about the model then: an earlier verification stays as it was.
+   */
+  inconclusive?: boolean;
 }
 
 /** Accepted by the provider (it produced a response, even if cut short by the tiny cap). */
@@ -101,16 +106,32 @@ function parseOutputLimit(message: string): number | null {
   return Number.isFinite(value) && value >= 16 ? value : null;
 }
 
+/**
+ * Verification runs inside one request from the web app, which gives up after a little over
+ * two minutes. Without a limit of its own, a slow provider could keep it sending paid probes
+ * long after the person had been told it failed.
+ */
+export const PROBE_TOTAL_BUDGET_MS = 110_000;
+
+const OUT_OF_TIME =
+  "Verification did not finish in time, so nothing about this model was changed. The provider is answering slowly; try again in a few minutes.";
+
 export async function probeModel(
   provider: ProviderClient,
   model: string,
   verifyOutputCap: number,
   hooks: ProbeHooks,
-  options: { timeoutMs: number; now?: () => Date } = { timeoutMs: 45000 },
+  options: { timeoutMs: number; totalBudgetMs?: number; now?: () => Date } = { timeoutMs: 45000 },
 ): Promise<ProbeResult> {
   const used = new Set<string>();
   const notes: string[] = [];
-  const call = { timeoutMs: options.timeoutMs };
+  const deadline = Date.now() + (options.totalBudgetMs ?? PROBE_TOTAL_BUDGET_MS);
+  const timeLeft = () => deadline - Date.now();
+  /** No request outlives the budget: each gets what is left of it, at most its own timeout. */
+  const callOptions = () => ({
+    timeoutMs: Math.max(1000, Math.min(options.timeoutMs, timeLeft())),
+  });
+  const outOfTime = () => timeLeft() < 1500;
 
   const send = async (
     key: string,
@@ -128,7 +149,7 @@ export async function probeModel(
       params,
       ...extra,
     };
-    const outcome = await provider.createResponse(request, call);
+    const outcome = await provider.createResponse(request, callOptions());
     await hooks.onOutcome(key, outcome, {
       ...params,
       max_output_tokens: cap,
@@ -156,6 +177,10 @@ export async function probeModel(
     return finish({ verified: false, capabilities: null, error: message });
   }
 
+  const timedOut = () =>
+    finish({ verified: false, capabilities: null, error: OUT_OF_TIME, inconclusive: true });
+  if (outOfTime()) return timedOut();
+
   // 2. A second turn can continue from the stored first response.
   const chain = await send(
     "chain",
@@ -168,6 +193,8 @@ export async function probeModel(
   if (!chaining && chain.kind === "failure") {
     notes.push(`Chaining with previous_response_id was rejected: ${chain.failure.message}`);
   }
+
+  if (outOfTime()) return timedOut();
 
   // 3. Which reasoning efforts, sampling parameters and verbosity the model accepts.
   const [effortOutcomes, temperature, topP, verbosity] = await Promise.all([
@@ -198,7 +225,7 @@ export async function probeModel(
       return "never";
     }
     // Some reasoning models accept sampling parameters only with reasoning turned off.
-    if (!efforts.includes("none")) return "never";
+    if (!efforts.includes("none") || outOfTime()) return "never";
     const withNone = await send(`${key}:none`, { ...params, reasoning_effort: "none" });
     return accepted(withNone) ? "effort_none" : "never";
   };
@@ -206,6 +233,8 @@ export async function probeModel(
     temperature: 0.7,
   });
   const topPSupport = await samplingSupport("top_p", topP, { top_p: 0.9 });
+
+  if (outOfTime()) return timedOut();
 
   // 4. The output cap the owner intends to use is accepted.
   let verifiedCap = SMALL_CAP;
@@ -222,6 +251,8 @@ export async function probeModel(
     }
   }
 
+  if (outOfTime()) return timedOut();
+
   // 5. Background mode: accepted, then followed to a terminal status so its usage is recorded.
   let background = false;
   used.add("background");
@@ -233,18 +264,24 @@ export async function probeModel(
     params: {},
     background: true,
   };
-  let backgroundOutcome = await provider.createResponse(backgroundRequest, call);
+  let backgroundOutcome = await provider.createResponse(backgroundRequest, callOptions());
   if (accepted(backgroundOutcome)) {
     background = true;
-    const deadline = Date.now() + 20000;
-    while (backgroundOutcome.kind === "pending" && Date.now() < deadline) {
+    const pollUntil = Math.min(Date.now() + 20000, deadline - 5000);
+    while (backgroundOutcome.kind === "pending" && Date.now() < pollUntil) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      const polled = await provider.retrieveResponse(backgroundOutcome.pending.response_id, call);
+      const polled = await provider.retrieveResponse(
+        backgroundOutcome.pending.response_id,
+        callOptions(),
+      );
       // A failed poll is not a failed response: keep waiting on the original.
       if (polled.kind !== "failure") backgroundOutcome = polled;
     }
     if (backgroundOutcome.kind === "pending") {
-      const canceled = await provider.cancelResponse(backgroundOutcome.pending.response_id, call);
+      const canceled = await provider.cancelResponse(
+        backgroundOutcome.pending.response_id,
+        callOptions(),
+      );
       if (canceled.kind !== "pending") backgroundOutcome = canceled;
     }
   } else if (backgroundOutcome.kind === "failure" && !rejectedAsUnsupported(backgroundOutcome)) {
