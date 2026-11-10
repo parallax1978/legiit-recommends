@@ -20,9 +20,15 @@ export function projectRef(): string | undefined {
 
 export interface ManagementClient {
   ref: string;
+  /** One request. A GET is repeated a few times when the API fails to answer it properly. */
   request<T = unknown>(method: string, path: string, body?: unknown): Promise<T>;
-  /** Runs SQL as the `postgres` role. A multi-statement query is one transaction. */
+  /** Runs SQL as the `postgres` role. A multi-statement query is one transaction. Sent once. */
   sql<Row extends object = Record<string, unknown>>(
+    query: string,
+    parameters?: unknown[],
+  ): Promise<Row[]>;
+  /** Runs a query that changes nothing, repeating it when the API fails to answer properly. */
+  read<Row extends object = Record<string, unknown>>(
     query: string,
     parameters?: unknown[],
   ): Promise<Row[]>;
@@ -35,6 +41,29 @@ export class ManagementError extends Error {
   ) {
     super(message);
     this.name = "ManagementError";
+  }
+}
+
+/**
+ * Repeats a request that changes nothing. The Management API occasionally fails one request
+ * out of many ("Failed to retrieve project", a gateway error) and answers the next normally;
+ * a deployment should not stop for that. A rejected token (401, 403) is not repeated.
+ */
+export async function retryRead<T>(
+  run: () => Promise<T>,
+  options: { attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<T> {
+  const attempts = options.attempts ?? 3;
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      const status = error instanceof ManagementError ? error.status : null;
+      if (attempt >= attempts || status === 401 || status === 403) throw error;
+      await sleep(options.delayMs ?? 2000);
+    }
   }
 }
 
@@ -76,11 +105,16 @@ export function managementClient(): ManagementClient {
     return parsed as T;
   }
 
+  const sql = <Row extends object>(query: string, parameters?: unknown[]) =>
+    request<Row[]>("POST", "/database/query", { query, ...(parameters ? { parameters } : {}) });
   return {
     ref,
-    request,
-    sql: (query, parameters) =>
-      request("POST", "/database/query", { query, ...(parameters ? { parameters } : {}) }),
+    request: (method, path, body) =>
+      method.toUpperCase() === "GET"
+        ? retryRead(() => request(method, path))
+        : request(method, path, body),
+    sql,
+    read: (query, parameters) => retryRead(() => sql(query, parameters)),
   };
 }
 

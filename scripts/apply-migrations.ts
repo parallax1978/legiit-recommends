@@ -77,9 +77,9 @@ const HISTORY_EXISTS_SQL =
 
 /** The versions the project records as applied. Empty when it has no history table yet. */
 async function appliedVersions(api: ManagementClient): Promise<string[] | null> {
-  const history = await api.sql<{ exists: boolean }>(HISTORY_EXISTS_SQL);
+  const history = await api.read<{ exists: boolean }>(HISTORY_EXISTS_SQL);
   if (history[0]?.exists !== true) return null;
-  const rows = await api.sql<{ version: string }>(
+  const rows = await api.read<{ version: string }>(
     "select version from supabase_migrations.schema_migrations order by version",
   );
   return rows.map((row) => row.version);

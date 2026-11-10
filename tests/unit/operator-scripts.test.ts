@@ -26,6 +26,7 @@ import {
   type ScheduleStatus,
 } from "../../scripts/lib/schedules";
 import { REQUIRED_MAX_ROWS, maxRowsProblem } from "../../scripts/lib/data-api";
+import { ManagementError, retryRead } from "../../scripts/lib/management";
 import {
   OPENAI_API_BASE_URL,
   endpointOverrideProblem,
@@ -432,6 +433,45 @@ describe("Data API row limit", () => {
     expect(maxRowsProblem(100)).toMatch(/would stop after their first page/);
     for (const unknown of [undefined, null, "1000", Number.NaN]) {
       expect(maxRowsProblem(unknown)).toMatch(/could not be checked/);
+    }
+  });
+});
+
+describe("reads through the Management API", () => {
+  const noWait = { sleep: () => Promise.resolve() };
+
+  it("repeats a read the API failed to answer, and returns the answer when it comes", async () => {
+    let calls = 0;
+    const result = await retryRead(() => {
+      calls += 1;
+      if (calls < 3) throw new ManagementError(500, "Failed to retrieve project");
+      return Promise.resolve(["20260101000000"]);
+    }, noWait);
+    expect(result).toEqual(["20260101000000"]);
+    expect(calls).toBe(3);
+  });
+
+  it("gives up after three attempts with the last error", async () => {
+    let calls = 0;
+    await expect(
+      retryRead(() => {
+        calls += 1;
+        return Promise.reject(new TypeError("fetch failed"));
+      }, noWait),
+    ).rejects.toThrow("fetch failed");
+    expect(calls).toBe(3);
+  });
+
+  it("does not repeat a request the API refused for its token", async () => {
+    for (const status of [401, 403]) {
+      let calls = 0;
+      await expect(
+        retryRead(() => {
+          calls += 1;
+          return Promise.reject(new ManagementError(status, "Unauthorized"));
+        }, noWait),
+      ).rejects.toThrow("Unauthorized");
+      expect(calls).toBe(1);
     }
   });
 });
