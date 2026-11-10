@@ -121,12 +121,12 @@ npm run test:integration
 npm run test:e2e
 ```
 
-| Suite              | What runs                                                                             | Provider         |
-| ------------------ | ------------------------------------------------------------------------------------- | ---------------- |
-| `test:unit`        | Detection, templates, selection, cost math, CSV, timezone handling                    | none             |
-| `test:integration` | The real local database, Auth, queue, Vault and the engine                            | provider double  |
-| `test:e2e`         | A browser driving the built app end to end, with real Cron, Queues and Edge Functions | provider double  |
-| `smoke:live`       | Three chained turns and one fresh check against the real OpenAI API                   | **real, billed** |
+| Suite              | What runs                                                                                             | Provider         |
+| ------------------ | ----------------------------------------------------------------------------------------------------- | ---------------- |
+| `test:unit`        | Detection, templates, selection, cost math, CSV, timezone handling                                    | none             |
+| `test:integration` | The real local database, Auth, queue, Vault and the engine                                            | provider double  |
+| `test:e2e`         | A browser driving the built app at desktop and phone sizes, with real Cron, Queues and Edge Functions | provider double  |
+| `smoke:live`       | Three chained turns and one fresh check against the real OpenAI API                                   | **real, billed** |
 
 `npm run check` runs formatting, lint, type checks, unit tests and a production build.
 Integration and end-to-end tests need the local stack (`npm run db:start`); the end-to-end tests

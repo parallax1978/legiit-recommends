@@ -169,6 +169,64 @@ test("an admin writes prompts and a fresh-check question set", async () => {
   await expect(page.getByRole("heading", { name: "Bakery questions" })).toBeVisible();
 });
 
+test("prompts can be imported from CSV and generated for review", async () => {
+  // Import: rows are validated and shown before anything is saved; invalid rows are skipped.
+  await page.goto("/library?kind=extra_step");
+  await page.getByRole("button", { name: "Import CSV" }).click();
+  await page
+    .getByLabel("Or paste CSV text")
+    .fill(
+      [
+        "body,label",
+        '"Which of these would you pick for {{category}}, and why?",Follow-up',
+        "Does {{nonsense}} matter here?,Broken",
+        "=SUM(1;2) is not a formula here,Formula-like",
+      ].join("\n"),
+    );
+  await page.getByRole("button", { name: "Review rows" }).click();
+  await expect(page.getByText("2 of 3 rows can be imported")).toBeVisible();
+  await expect(page.getByText("Unknown variable {{nonsense}}.")).toBeVisible();
+  await page.getByRole("button", { name: "Import 2 prompts" }).click();
+  await expect(page.getByRole("region", { name: "Additional messages" })).toContainText(
+    "Which of these would you pick for",
+  );
+  await expect(page.getByRole("region", { name: "Additional messages" })).toContainText(
+    "CSV import",
+  );
+
+  // Exported cells that a spreadsheet would run as a formula are neutralized.
+  const exported = await (await page.request.get("/exports/library?kind=extra_step")).text();
+  expect(exported).toContain("'=SUM(1;2) is not a formula here");
+
+  // Generation is explicit, sends one request, and saves nothing until reviewed.
+  await page.getByRole("button", { name: "Generate variations" }).click();
+  await page.getByLabel("Connection and model").selectOption({ index: 1 });
+  await page.getByLabel("How many").fill("2");
+  const before = (
+    await sql<{ n: string }>(
+      "select count(*)::text as n from public.templates where kind = 'extra_step'",
+    )
+  )[0]!.n;
+  await page.getByRole("button", { name: "Generate", exact: true }).click();
+  await expect(page.getByLabel("Variation 1", { exact: true })).toBeVisible({ timeout: 60_000 });
+  expect(
+    (
+      await sql<{ n: string }>(
+        "select count(*)::text as n from public.templates where kind = 'extra_step'",
+      )
+    )[0]!.n,
+  ).toBe(before);
+  await page.getByLabel("Keep variation 2").uncheck();
+  await page.getByRole("button", { name: "Save 1 to library" }).click();
+  await expect(page.getByRole("region", { name: "Additional messages" })).toContainText(
+    "AI generated",
+  );
+  const usage = await sql<{ n: string }>(
+    "select count(*)::text as n from public.usage_ledger where purpose = 'variation_generation'",
+  );
+  expect(usage[0]!.n).toBe("1");
+});
+
 test("campaign setup starts empty, saves as a draft and shows the planned workload", async () => {
   await page.goto("/campaigns");
   await expect(page.getByText("No campaigns yet")).toBeVisible();
@@ -232,7 +290,8 @@ test("campaign setup starts empty, saves as a draft and shows the planned worklo
   await page.locator("#c-concurrency").fill("2");
   await page.locator("#c-missed").selectOption("skip");
   await page.locator("#c-probe-set").selectOption({ index: 1 });
-  await page.locator("#c-baseline").fill("2");
+  // One baseline check per question, so the held-out question always has a baseline.
+  await page.locator("#c-baseline").fill("3");
   await page.locator("#c-daily").fill("0");
   await page.locator("#c-final").fill("2");
   await page.locator("#c-daily-budget").fill("5");
@@ -288,6 +347,25 @@ test("a test conversation runs the real three-turn sequence and is kept out of r
   expect(
     (await sql<{ status: string }>("select status::text from public.campaigns"))[0]!.status,
   ).toBe("draft");
+
+  // A person can correct a classification; the earlier one stays in the history.
+  await page.getByRole("button", { name: "Correct" }).last().click();
+  await page.getByLabel("The business is…").selectOption("mentioned_only");
+  await page.getByLabel("Note").fill("Named in passing only.");
+  await page.getByRole("button", { name: "Save correction" }).click();
+  await expect(page.getByText("Set by a person").first()).toBeVisible();
+  await expect(page.getByText("History (2)")).toBeVisible();
+  const history = await sql<{ method: string; inclusion: string; is_current: boolean }>(
+    "select k.method, k.inclusion, k.is_current from public.classifications k join public.run_turns t on t.id = k.subject_id where t.step_index = 3 and k.subject_type = 'run_turn' order by k.created_at",
+  );
+  expect(history).toEqual([
+    { method: "rules", inclusion: "included", is_current: false },
+    { method: "manual", inclusion: "mentioned_only", is_current: true },
+  ]);
+  const audit = await sql<{ n: string }>(
+    "select count(*)::text as n from public.audit_events where action = 'classification.corrected'",
+  );
+  expect(audit[0]!.n).toBe("1");
 });
 
 test("launching starts the schedule: baseline checks, then conversations, with results", async () => {
@@ -310,7 +388,7 @@ test("launching starts the schedule: baseline checks, then conversations, with r
   const baseline = await sql<{ status: string; rendered_prompt: string; completed_at: string }>(
     "select status::text, rendered_prompt, completed_at from public.fresh_checks where phase = 'baseline'",
   );
-  expect(baseline).toHaveLength(2);
+  expect(baseline).toHaveLength(3);
   const firstRun = await sql<{ started_at: string }>(
     "select started_at from public.runs where kind = 'scheduled' order by started_at limit 1",
   );

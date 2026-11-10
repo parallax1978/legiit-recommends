@@ -1,5 +1,5 @@
 import { PromptText } from "@/components/library/prompt-fields";
-import { Badge, Card, CardBody, CardHeader } from "@/components/ui/card";
+import { Badge, Callout, Card, CardBody, CardHeader } from "@/components/ui/card";
 import { DefinitionList } from "@/components/ui/misc";
 import {
   describeWeekdays,
@@ -111,6 +111,12 @@ export function ConfigSummary({
       (revision.daily_checks ?? 0) +
       (revision.final_samples ?? 0) >
     0;
+  const questionCount = probeSet?.questions ?? 0;
+  const partialCoverage =
+    questionCount > 0 &&
+    [revision.baseline_samples, revision.final_samples].some(
+      (count) => (count ?? 0) > 0 && (count ?? 0) < questionCount,
+    );
   const combos = steps.reduce(
     (product, step) => product * BigInt(Math.max(step.wordings.length, 1)),
     1n,
@@ -312,7 +318,20 @@ export function ConfigSummary({
                 },
               ]}
             />
-          ) : (
+          ) : null}
+          {partialCoverage ? (
+            <Callout
+              tone="info"
+              className="mt-4"
+              title="Not every question is asked in every phase"
+            >
+              The set has {probeSet?.questions} questions and they are used in rotation, so a phase
+              with fewer checks than that covers only some of them — a question, including a
+              held-out one, can end up without a baseline to compare against. Use at least{" "}
+              {probeSet?.questions} checks in the baseline and final phases to cover every question.
+            </Callout>
+          ) : null}
+          {checksOn || probeSet ? null : (
             <p className="text-ink-muted text-[13px]">
               <Badge tone="warn">Off</Badge> No fresh checks are configured, so this campaign would
               have no independent measurement.
