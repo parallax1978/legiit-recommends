@@ -16,7 +16,9 @@
 //
 // The raw answer is never modified: every match carries character offsets into the original text.
 
-export const DETECTOR_VERSION = "rules-1";
+// rules-2: positions after an emoji are no longer shifted (rules-1 read a listed business that
+// followed one as "needs review").
+export const DETECTOR_VERSION = "rules-2";
 
 export interface DetectionTarget {
   business_name: string;
@@ -92,8 +94,12 @@ function normalizeWithMap(input: string, lowerCase: boolean): Normalized {
       } else {
         previousWasSpace = false;
       }
-      for (const unit of c) {
-        out.push(unit);
+      // One entry per UTF-16 code unit, not per character. Matches are found by position in
+      // the joined string, which counts in those units, and a character outside the Basic
+      // Multilingual Plane (most emoji) has two: with one entry for it, every match after an
+      // emoji was reported one position too far to the right.
+      for (let unit = 0; unit < c.length; unit += 1) {
+        out.push(c[unit]!);
         map.push(start);
       }
     }

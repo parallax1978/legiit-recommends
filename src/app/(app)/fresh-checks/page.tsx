@@ -12,7 +12,7 @@ import { Select } from "@/components/ui/form";
 import { LocalTime } from "@/components/ui/local-time";
 import { Pagination, Screen, buildHref } from "@/components/ui/misc";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/table";
-import { PAGE_OUT_OF_RANGE, readError, rowsOf } from "@/lib/batch";
+import { PAGE_OUT_OF_RANGE, readError, rowsOf, selectAll } from "@/lib/batch";
 import { formatDate, formatUsd } from "@/lib/format";
 import { humanize, phaseLabel } from "@/lib/labels";
 import { first, pageNumber, uuidParam, type SearchParams } from "@/lib/params";
@@ -105,7 +105,16 @@ async function FreshChecks({ searchParams }: { searchParams: Promise<SearchParam
   else if (outcome) list = list.eq("status", "completed").eq("inclusion", outcome);
 
   const [metrics, groups, checks, manual, revision] = await Promise.all([
-    supabase.rpc("campaign_check_metrics", { p_campaign_id: campaign.id }),
+    // One row per comparison group, phase, question kind and day: read in pages.
+    selectAll("Fresh checks", (start, end) =>
+      supabase
+        .rpc("campaign_check_metrics", { p_campaign_id: campaign.id })
+        .order("group_sequence")
+        .order("phase")
+        .order("is_held_out")
+        .order("local_day")
+        .range(start, end),
+    ),
     supabase.from("comparison_groups").select("*").eq("campaign_id", campaign.id).order("sequence"),
     list,
     supabase
@@ -121,8 +130,7 @@ async function FreshChecks({ searchParams }: { searchParams: Promise<SearchParam
   // same filters. Saying "no fresh checks" under the campaign's own totals would be untrue.
   if (checks.error?.code === PAGE_OUT_OF_RANGE && page > 1)
     redirect(buildHref("/fresh-checks", { campaign: campaign.id, phase, questions, outcome }));
-  const failed =
-    metrics.error ?? checks.error ?? groups.error ?? manual.error ?? revision.error ?? null;
+  const failed = checks.error ?? groups.error ?? manual.error ?? revision.error ?? null;
   if (failed) throw readError("Fresh checks", failed);
   const zoneRead = revision.data?.active_revision_id
     ? await supabase
@@ -167,11 +175,7 @@ async function FreshChecks({ searchParams }: { searchParams: Promise<SearchParam
       <div className="flex flex-col gap-8">
         <div className="flex flex-col gap-4">
           <ApiResultsNote />
-          <FreshCheckComparisons
-            groups={groups.data ?? []}
-            rows={metrics.data ?? []}
-            heading={false}
-          />
+          <FreshCheckComparisons groups={groups.data ?? []} rows={metrics} heading={false} />
         </div>
 
         <section aria-labelledby="fc-responses">

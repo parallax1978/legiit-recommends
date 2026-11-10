@@ -610,14 +610,16 @@ export class FakeOpenAI {
         input.toLowerCase().includes(rule.questionIncludes),
       );
       if (organic) names.splice(Math.min(organic.position - 1, names.length), 0, organic.business);
-      outputText = `Here are some options worth considering:\n\n${renderList(names)}\n\nLet me know if you'd like more detail on any of these.`;
+      // Real answers are full of emoji, and most emoji take two UTF-16 units: the detector once
+      // lost its place after one. Every simulated answer carries some before the list.
+      outputText = `🚀 Here are some options worth considering:\n\n${renderList(names)}\n\nLet me know if you'd like more detail on any of these.`;
     } else {
       const requested = requestedBusiness(input);
       if (requested && !added.includes(requested)) added.push(requested);
       const names = [...base, ...added];
       outputText = requested
-        ? `Sure, I've added ${requested} to the list:\n\n${renderList(names)}`
-        : `Here is the complete list so far:\n\n${renderList(names)}`;
+        ? `Sure, I've added ${requested} to the list 🎉👍🏽:\n\n${renderList(names)}`
+        : `📋 Here is the complete list so far:\n\n${renderList(names)}`;
     }
 
     const contextTokens = (previous?.context_tokens ?? 0) + tokens(input);

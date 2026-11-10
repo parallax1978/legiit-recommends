@@ -367,3 +367,66 @@ describe("inclusion classification", () => {
     expect(classifyResponse(text, target)).toMatchObject({ inclusion: "ambiguous" });
   });
 });
+
+// Model answers are full of emoji, and most emoji take two UTF-16 units. Match positions were
+// once counted per character on one side and per unit on the other, so everything after an
+// emoji was read one position off for each emoji before it.
+describe("answers that contain emoji", () => {
+  const spanText = (text: string) =>
+    classifyResponse(text, target).matched_spans.map((span) => text.slice(span.start, span.end));
+  const list = (prefix: string) =>
+    [
+      "Here are the top picks:" + prefix,
+      "",
+      "1. **Alpha Beans** – wide selection",
+      "2. **Northwind Roasters** – small-batch, ships weekly",
+      "3. **Gamma Roast** – budget friendly",
+    ].join("\n");
+
+  it("classifies a listed business the same with and without an emoji before it", () => {
+    const plain = classifyResponse(list(""), target);
+    expect(plain).toMatchObject({ inclusion: "included", rank: 2 });
+    for (const emoji of [" 🚀", " 🚀🥇🎯", " 👍🏽", " 👨‍👩‍👧‍👦", " ✅ ⭐"]) {
+      const text = list(emoji);
+      expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", rank: 2 });
+      expect(spanText(text)).toEqual(["Northwind Roasters"]);
+    }
+  });
+
+  it("handles an emoji in front of every list item", () => {
+    const text = [
+      "Top picks:",
+      "",
+      "1. 🥇 **Alpha Beans** – wide selection",
+      "2. 🥈 **Northwind Roasters** – small-batch",
+      "3. 🥉 **Gamma Roast** – budget friendly",
+    ].join("\n");
+    expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", rank: 2 });
+    expect(spanText(text)).toEqual(["Northwind Roasters"]);
+    expect(findMentions(text, target)[0]).toMatchObject({ text: "Northwind Roasters" });
+  });
+
+  it("never promotes a mention inside another item's description, however many emoji precede it", () => {
+    const text = [
+      ...Array.from({ length: 11 }, (_, index) => `${index + 1}. 🚀 **Shop ${index + 1}** – fine.`),
+      "12. **Alpha Beans** – cheaper than Northwind Roasters",
+      "13. **Gamma Roast** – big.",
+    ].join("\n");
+    const result = classifyResponse(text, target);
+    // The business is named, but not as one of the recommended items: it must not be given the
+    // rank of the item that happens to follow.
+    expect(result.inclusion).not.toBe("included");
+    expect(result.rank).toBeNull();
+    expect(spanText(text)).toEqual(["Northwind Roasters"]);
+  });
+
+  it("keeps offsets exact for accented text and symbols mixed with emoji", () => {
+    const text =
+      "Café ☕ tips 🎉: try Nörthwind Roasters today 🙌, or northwindroasters.example 🚀.";
+    const mentions = findMentions(text, target);
+    expect(mentions.map((m) => text.slice(m.start, m.end))).toEqual([
+      "Nörthwind Roasters",
+      "northwindroasters.example",
+    ]);
+  });
+});

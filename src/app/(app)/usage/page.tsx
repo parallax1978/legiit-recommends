@@ -12,6 +12,7 @@ import { Select } from "@/components/ui/form";
 import { LocalTime } from "@/components/ui/local-time";
 import { Screen } from "@/components/ui/misc";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/table";
+import { readError, rowsOf, selectAll } from "@/lib/batch";
 import { formatCompact, formatDate, formatNumber, formatUsd } from "@/lib/format";
 import { PURPOSES, errorClass, purposeLabel } from "@/lib/labels";
 import { first, uuidParam, type SearchParams } from "@/lib/params";
@@ -48,13 +49,23 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
     ),
   );
 
-  const [usage, budgets, campaigns, unresolved, held] = await Promise.all([
-    supabase.rpc("usage_daily", {
-      p_workspace_id: workspaceId,
-      p_from: from,
-      p_to: to,
-      p_campaign_id: campaignId ?? undefined,
-    }),
+  const [rows, budgets, campaigns, unresolved, held] = await Promise.all([
+    // One row per day, purpose and model: a long range has more rows than one response holds,
+    // and the newest days would be the ones to go missing.
+    selectAll("Usage", (start, end) =>
+      supabase
+        .rpc("usage_daily", {
+          p_workspace_id: workspaceId,
+          p_from: from,
+          p_to: to,
+          p_campaign_id: campaignId ?? undefined,
+        })
+        .order("usage_day")
+        .order("purpose")
+        .order("model")
+        .order("is_test")
+        .range(start, end),
+    ),
     supabase.rpc("budget_status", { p_workspace_id: workspaceId }),
     supabase
       .from("campaigns")
@@ -66,6 +77,7 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
       .from("provider_attempts")
       .select(
         "id, purpose, requested_model, started_at, error_class, error_message, response_id, run_id, fresh_check_id, campaign_id, reservation_id, is_test",
+        { count: "exact" },
       )
       .eq("workspace_id", workspaceId)
       .eq("status", "uncertain")
@@ -74,14 +86,14 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
       .limit(50),
     supabase
       .from("budget_reservations")
-      .select("id, amount_usd, purpose, created_at, campaign_id")
+      .select("id, amount_usd, purpose, created_at, campaign_id", { count: "exact" })
       .eq("workspace_id", workspaceId)
       .eq("status", "held")
       .order("created_at", { ascending: false })
       .limit(200),
   ]);
-  if (usage.error || budgets.error) throw new Error("Usage could not be loaded.");
-  const rows = usage.data ?? [];
+  const failed = budgets.error ?? campaigns.error ?? unresolved.error ?? held.error;
+  if (failed) throw readError("Usage", failed);
   const budget = budgets.data as unknown as BudgetStatus;
   const campaignName = new Map(
     (campaigns.data ?? []).map((campaign) => [campaign.id, campaign.name]),
@@ -90,11 +102,15 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
   const reservationIds = (unresolved.data ?? [])
     .map((attempt) => attempt.reservation_id)
     .filter((value): value is string => Boolean(value));
-  const { data: reservations } = reservationIds.length
-    ? await supabase.from("budget_reservations").select("id, amount_usd").in("id", reservationIds)
-    : { data: [] };
+  // At most 50 ids (the list above is limited to the newest 50).
+  const reservations = reservationIds.length
+    ? await rowsOf(
+        "Usage",
+        supabase.from("budget_reservations").select("id, amount_usd").in("id", reservationIds),
+      )
+    : [];
   const reservedAmount = new Map(
-    (reservations ?? []).map((reservation) => [reservation.id, Number(reservation.amount_usd)]),
+    reservations.map((reservation) => [reservation.id, Number(reservation.amount_usd)]),
   );
 
   const totals = rows.reduce(
@@ -173,6 +189,12 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
     (sum, attempt) => sum + (reservedAmount.get(attempt.reservation_id ?? "") ?? 0),
     0,
   );
+  // The two lists show the newest rows only. The counts are exact; an amount added up from a
+  // list that was cut is a lower bound and is labelled as one.
+  const heldCount = held.count ?? (held.data ?? []).length;
+  const heldPartial = heldCount > (held.data ?? []).length;
+  const unresolvedCount = unresolved.count ?? (unresolved.data ?? []).length;
+  const unresolvedPartial = unresolvedCount > (unresolved.data ?? []).length;
 
   return (
     <>
@@ -520,14 +542,14 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Stat
             label="Held for requests in flight"
-            value={formatUsd(heldTotal)}
-            detail={`${formatNumber((held.data ?? []).length)} reservation${(held.data ?? []).length === 1 ? "" : "s"} right now`}
+            value={`${heldPartial ? "At least " : ""}${formatUsd(heldTotal)}`}
+            detail={`${formatNumber(heldCount)} reservation${heldCount === 1 ? "" : "s"} right now${heldPartial ? "; the amount adds up the newest 200" : ""}`}
           />
           <Stat
             label="Held for requests with an unknown outcome"
-            value={formatUsd(unresolvedTotal)}
-            tone={(unresolved.data ?? []).length > 0 ? "bad" : undefined}
-            detail={`${formatNumber((unresolved.data ?? []).length)} waiting for a decision`}
+            value={`${unresolvedPartial ? "At least " : ""}${formatUsd(unresolvedTotal)}`}
+            tone={unresolvedCount > 0 ? "bad" : undefined}
+            detail={`${formatNumber(unresolvedCount)} waiting for a decision${unresolvedPartial ? "; the newest 50 are listed and added up" : ""}`}
           />
         </div>
       </section>

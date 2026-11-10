@@ -1,8 +1,12 @@
 import { PromptText } from "@/components/library/prompt-fields";
 import { Badge, Card, CardBody, CardHeader } from "@/components/ui/card";
+import { PAGE_SIZE, readError } from "@/lib/batch";
 import { formatNumber } from "@/lib/format";
 import { templateKind } from "@/lib/labels";
 import type { ServerClient } from "@/lib/supabase/server";
+
+/** Conversations looked at to count the combinations in use: the most one request returns. */
+const RUN_SAMPLE = 1000;
 
 /**
  * How often each wording has been used by the campaign's scheduled conversations, and how many
@@ -24,10 +28,18 @@ export async function WordingCoverage({
       .eq("kind", "scheduled")
       .not("combination_index", "is", null)
       .order("created_at", { ascending: false })
-      .limit(1000),
+      .order("id", { ascending: false })
+      .limit(RUN_SAMPLE),
   ]);
+  if (coverage.error) throw readError("Wording coverage", coverage.error);
+  if (runs.error) throw readError("Wording coverage", runs.error);
   const rows = coverage.data ?? [];
-  if (coverage.error || rows.length === 0) return null;
+  if (rows.length === 0) return null;
+  // Both reads stop at the Data API's row limit. Nothing here is cut for a campaign of ordinary
+  // size; beyond it the card says that its numbers are lower bounds instead of presenting them
+  // as exact.
+  const runsCut = (runs.data ?? []).length >= RUN_SAMPLE;
+  const wordingsCut = rows.length >= PAGE_SIZE;
 
   const steps = [...new Set(rows.map((row) => row.step_index))].sort((a, b) => a - b);
   const total = steps.reduce(
@@ -56,9 +68,14 @@ export async function WordingCoverage({
         title="Wording coverage"
         description={
           <>
+            {runsCut ? "At least " : ""}
             {formatNumber(used)} of {total.toLocaleString("en-US")} possible combination
-            {total === 1n ? "" : "s"} used so far by the current revision. When every combination
-            has been used, they repeat.
+            {total === 1n ? "" : "s"} used so far by the current revision
+            {runsCut ? ` (counted over its newest ${formatNumber(RUN_SAMPLE)} conversations)` : ""}.
+            When every combination has been used, they repeat.
+            {wordingsCut
+              ? ` Only the first ${formatNumber(PAGE_SIZE)} wordings are listed below.`
+              : ""}
           </>
         }
       />

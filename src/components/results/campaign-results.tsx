@@ -11,6 +11,7 @@ import {
   formatUsd,
   rate,
 } from "@/lib/format";
+import { readError, selectAll } from "@/lib/batch";
 import type { CheckMetrics, ConversationMetrics, DailyActivityRow, Row } from "@/lib/queries/types";
 import type { ServerClient } from "@/lib/supabase/server";
 
@@ -497,14 +498,23 @@ export async function CampaignResults({
 }) {
   const [conversations, checks, groups, activity] = await Promise.all([
     supabase.rpc("campaign_conversation_metrics", { p_campaign_id: campaignId }),
-    supabase.rpc("campaign_check_metrics", { p_campaign_id: campaignId }),
+    // One row per comparison group, phase, question kind and day: read in pages.
+    selectAll("Results", (start, end) =>
+      supabase
+        .rpc("campaign_check_metrics", { p_campaign_id: campaignId })
+        .order("group_sequence")
+        .order("phase")
+        .order("is_held_out")
+        .order("local_day")
+        .range(start, end),
+    ),
     supabase.from("comparison_groups").select("*").eq("campaign_id", campaignId).order("sequence"),
     supabase.rpc("campaign_daily_activity", { p_campaign_id: campaignId }),
   ]);
-  if (conversations.error || checks.error || activity.error)
-    throw new Error("Results could not be loaded.");
+  const failed = conversations.error ?? activity.error ?? groups.error;
+  if (failed) throw readError("Results", failed);
   const cohorts = conversations.data ?? [];
-  const checkRows = checks.data ?? [];
+  const checkRows = checks;
   const groupRows = groups.data ?? [];
 
   if (!launched) {
