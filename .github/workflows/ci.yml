@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  checks:
+    name: Format, lint, types, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run typecheck:functions
+      - run: npm run test:unit
+      - name: Production build
+        run: npm run build
+        env:
+          # Placeholders: this job only proves the app builds. The end-to-end job builds
+          # against the real local stack.
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_placeholder
+
+  integration:
+    name: Database and backend integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start the local Supabase stack (applies every migration)
+        run: npx supabase start -x studio,imgproxy,logflare,vector,supavisor,storage-api
+      - name: Lint database functions
+        run: npm run db:lint
+      - name: Integration tests (provider double, no OpenAI requests)
+        run: npm run test:integration
+      - if: always()
+        run: npx supabase stop --no-backup
+
+  e2e:
+    name: End-to-end tests in a browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Point the Edge Functions at the provider double
+        run: |
+          cp supabase/functions/.env.example supabase/functions/.env
+          echo "OPENAI_BASE_URL=http://host.docker.internal:4010/v1" >> supabase/functions/.env
+      - name: Start the local Supabase stack
+        run: npx supabase start -x studio,imgproxy,logflare,vector,supavisor,storage-api
+      - name: Write local environment files
+        run: npm run env:local
+      - name: Install the test browser
+        run: npx playwright install --with-deps chromium
+      - name: End-to-end tests (provider double, no OpenAI requests)
+        run: npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+      - if: always()
+        run: npx supabase stop --no-backup

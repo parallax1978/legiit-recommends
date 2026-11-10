@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useActionState } from "react";
+import { startTransition, useActionState, type FormEvent } from "react";
 import {
   acceptInvite,
   completeSetup,
@@ -14,6 +14,23 @@ import type { ActionResult } from "@/lib/result";
 import { Callout } from "./ui/card";
 import { Field, Input } from "./ui/form";
 import { SubmitButton } from "./ui/submit-button";
+
+type FormAction = (previous: ActionResult | null, formData: FormData) => Promise<ActionResult>;
+
+/**
+ * Binds a form to a server action. With JavaScript the submit is handled here, so what the
+ * person typed stays in the fields when the action reports a problem; without it the form
+ * still posts to the action directly.
+ */
+function useFormAction(serverAction: FormAction) {
+  const [state, action, pending] = useActionState(serverAction, null);
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    startTransition(() => action(data));
+  };
+  return { state, action, onSubmit, pending };
+}
 
 function errorOf(state: ActionResult | null, field: string): string | null {
   return state && !state.ok ? (state.fieldErrors?.[field] ?? null) : null;
@@ -41,10 +58,10 @@ const LINK_ERRORS: Record<string, string> = {
 
 export function SignInForm() {
   const params = useSearchParams();
-  const [state, action] = useActionState(signIn, null);
+  const { state, action, onSubmit, pending } = useFormAction(signIn);
   const linkError = LINK_ERRORS[params.get("error") ?? ""];
   return (
-    <form action={action} className="flex flex-col gap-4" noValidate>
+    <form action={action} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       {linkError && !state ? (
         <Callout tone="warn" role="alert">
           {linkError}
@@ -73,7 +90,7 @@ export function SignInForm() {
           aria-invalid={Boolean(errorOf(state, "password"))}
         />
       </Field>
-      <SubmitButton size="lg" className="mt-1 w-full">
+      <SubmitButton pending={pending} size="lg" className="mt-1 w-full">
         Sign in
       </SubmitButton>
       <p className="text-ink-muted text-center text-[13px]">
@@ -86,14 +103,14 @@ export function SignInForm() {
 }
 
 export function ForgotPasswordForm() {
-  const [state, action] = useActionState(requestPasswordReset, null);
+  const { state, action, onSubmit, pending } = useFormAction(requestPasswordReset);
   return (
-    <form action={action} className="flex flex-col gap-4" noValidate>
+    <form action={action} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       <FormMessage state={state} />
       <Field label="Email" htmlFor="email" error={errorOf(state, "email")}>
         <Input id="email" name="email" type="email" autoComplete="email" required autoFocus />
       </Field>
-      <SubmitButton size="lg" className="mt-1 w-full">
+      <SubmitButton pending={pending} size="lg" className="mt-1 w-full">
         Send reset link
       </SubmitButton>
       <p className="text-ink-muted text-center text-[13px]">
@@ -138,12 +155,12 @@ function PasswordFields({ state }: { state: ActionResult | null }) {
 }
 
 export function ResetPasswordForm() {
-  const [state, action] = useActionState(updatePassword, null);
+  const { state, action, onSubmit, pending } = useFormAction(updatePassword);
   return (
-    <form action={action} className="flex flex-col gap-4" noValidate>
+    <form action={action} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       <FormMessage state={state} />
       <PasswordFields state={state} />
-      <SubmitButton size="lg" className="mt-1 w-full">
+      <SubmitButton pending={pending} size="lg" className="mt-1 w-full">
         Save password
       </SubmitButton>
     </form>
@@ -151,9 +168,9 @@ export function ResetPasswordForm() {
 }
 
 export function AcceptInviteForm({ email }: { email: string }) {
-  const [state, action] = useActionState(acceptInvite, null);
+  const { state, action, onSubmit, pending } = useFormAction(acceptInvite);
   return (
-    <form action={action} className="flex flex-col gap-4" noValidate>
+    <form action={action} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       <FormMessage state={state} />
       <Field label="Email" htmlFor="invite-email">
         <Input id="invite-email" value={email} readOnly disabled />
@@ -162,7 +179,7 @@ export function AcceptInviteForm({ email }: { email: string }) {
         <Input id="display_name" name="display_name" autoComplete="name" maxLength={120} />
       </Field>
       <PasswordFields state={state} />
-      <SubmitButton size="lg" className="mt-1 w-full">
+      <SubmitButton pending={pending} size="lg" className="mt-1 w-full">
         Accept invitation
       </SubmitButton>
     </form>
@@ -170,9 +187,9 @@ export function AcceptInviteForm({ email }: { email: string }) {
 }
 
 export function SetupForm() {
-  const [state, action] = useActionState(completeSetup, null);
+  const { state, action, onSubmit, pending } = useFormAction(completeSetup);
   return (
-    <form action={action} className="flex flex-col gap-4" noValidate>
+    <form action={action} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       <FormMessage state={state} />
       <Field
         label="Workspace name"
@@ -182,7 +199,7 @@ export function SetupForm() {
       >
         <Input id="workspace_name" name="workspace_name" required maxLength={80} autoFocus />
       </Field>
-      <SubmitButton size="lg" className="mt-1 w-full">
+      <SubmitButton pending={pending} size="lg" className="mt-1 w-full">
         Create workspace
       </SubmitButton>
     </form>

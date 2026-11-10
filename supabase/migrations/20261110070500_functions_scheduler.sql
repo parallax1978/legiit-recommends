@@ -1096,7 +1096,23 @@ begin
 end;
 $$;
 
--- Stores where queue consumers live and the shared secret they expect. Service role only.
+-- Creates the three schedules, or puts them back if one was removed. Running it again changes
+-- nothing: pg_cron updates a job that already has the same name.
+create or replace function app_private.ensure_schedules()
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform cron.schedule('lr-dispatch', '10 seconds', 'select app_private.cron_dispatch()');
+  perform cron.schedule('lr-plan', '* * * * *', 'select app_private.cron_plan()');
+  perform cron.schedule('lr-maintenance', '17 3 * * *', 'select app_private.cron_maintenance()');
+end;
+$$;
+
+-- Stores where queue consumers live and the shared secret they expect, and makes sure the
+-- schedules exist. Service role only.
 create or replace function public.svc_configure_worker(p_functions_base_url text, p_worker_secret text)
 returns void
 language plpgsql
@@ -1126,5 +1142,7 @@ begin
   else
     perform vault.update_secret(v_id, p_worker_secret);
   end if;
+
+  perform app_private.ensure_schedules();
 end;
 $$;

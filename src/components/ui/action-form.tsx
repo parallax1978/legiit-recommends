@@ -71,9 +71,7 @@ export function ActionForm({
       if (toastOnSuccess && state.message) toast.success(state.message);
       if (resetOnSuccess) ref.current?.reset();
       onSuccessRef.current?.(state);
-    } else if (!state.fieldErrors || Object.keys(state.fieldErrors).length === 0) {
-      toast.error(state.message);
-    } else {
+    } else if (state.fieldErrors && Object.keys(state.fieldErrors).length > 0) {
       // Move focus to the first field with a problem.
       const first = Object.keys(state.fieldErrors)[0];
       const field = first ? ref.current?.querySelector<HTMLElement>(`[name="${first}"]`) : null;

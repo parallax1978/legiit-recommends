@@ -12,11 +12,13 @@ import { adminClient, env, json, providerBaseUrl } from "../_shared/edge/runtime
 
 export default {
   async fetch(request: Request): Promise<Response> {
-    if (request.method !== "POST") return json({ ok: false, code: "method_not_allowed", message: "Use POST." }, 405);
+    if (request.method !== "POST")
+      return json({ ok: false, code: "method_not_allowed", message: "Use POST." }, 405);
 
     const authorization = request.headers.get("authorization") ?? "";
     const token = authorization.replace(/^Bearer\s+/i, "").trim();
-    if (!token) return json({ ok: false, code: "unauthorized", message: "Sign in to continue." }, 401);
+    if (!token)
+      return json({ ok: false, code: "unauthorized", message: "Sign in to continue." }, 401);
 
     const admin = adminClient();
     // Verified against the Auth server on every call: revoked or expired sessions are rejected.
@@ -29,7 +31,10 @@ export default {
     try {
       body = (await request.json()) as { action?: unknown; input?: unknown };
     } catch {
-      return json({ ok: false, code: "invalid_request", message: "The request body must be JSON." }, 400);
+      return json(
+        { ok: false, code: "invalid_request", message: "The request body must be JSON." },
+        400,
+      );
     }
     if (typeof body.action !== "string") {
       return json({ ok: false, code: "invalid_request", message: "Missing action." }, 400);
@@ -41,7 +46,8 @@ export default {
         {
           admin,
           userId: data.user.id,
-          createProvider: (apiKey) => createOpenAIProvider({ apiKey, ...(baseURL ? { baseURL } : {}) }),
+          createProvider: (apiKey) =>
+            createOpenAIProvider({ apiKey, ...(baseURL ? { baseURL } : {}) }),
           siteUrl: env("SITE_URL"),
         },
         body.action,
@@ -51,8 +57,17 @@ export default {
       return json(result);
     } catch (error) {
       // Never echo internals (or anything that could contain a credential) to the caller.
-      console.error(JSON.stringify({ event: "ops_error", action: body.action, message: String(error).slice(0, 500) }));
-      return json({ ok: false, code: "internal_error", message: "The operation failed unexpectedly." }, 500);
+      console.error(
+        JSON.stringify({
+          event: "ops_error",
+          action: body.action,
+          message: String(error).slice(0, 500),
+        }),
+      );
+      return json(
+        { ok: false, code: "internal_error", message: "The operation failed unexpectedly." },
+        500,
+      );
     }
   },
 };

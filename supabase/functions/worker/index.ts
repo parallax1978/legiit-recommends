@@ -11,9 +11,20 @@
 // committed state.
 
 import { createSupabaseEngineDb } from "../_shared/engine/db.ts";
-import { DEFAULT_ENGINE_CONFIG, processOneUnit, type UnitOutcome } from "../_shared/engine/worker.ts";
+import {
+  DEFAULT_ENGINE_CONFIG,
+  processOneUnit,
+  type UnitOutcome,
+} from "../_shared/engine/worker.ts";
 import { createOpenAIProvider } from "../_shared/provider/openai.ts";
-import { adminClient, env, json, providerBaseUrl, runInBackground, timingSafeEqual } from "../_shared/edge/runtime.ts";
+import {
+  adminClient,
+  env,
+  json,
+  providerBaseUrl,
+  runInBackground,
+  timingSafeEqual,
+} from "../_shared/edge/runtime.ts";
 
 function numberEnv(name: string, fallback: number): number {
   const value = Number(env(name));
@@ -30,8 +41,14 @@ async function work(workerId: string): Promise<UnitOutcome | { status: "error"; 
       config: {
         workerId,
         syncTimeoutMs: numberEnv("PROVIDER_SYNC_TIMEOUT_MS", DEFAULT_ENGINE_CONFIG.syncTimeoutMs),
-        shortTimeoutMs: numberEnv("PROVIDER_SHORT_TIMEOUT_MS", DEFAULT_ENGINE_CONFIG.shortTimeoutMs),
-        backgroundMaxMs: numberEnv("PROVIDER_BACKGROUND_MAX_MS", DEFAULT_ENGINE_CONFIG.backgroundMaxMs),
+        shortTimeoutMs: numberEnv(
+          "PROVIDER_SHORT_TIMEOUT_MS",
+          DEFAULT_ENGINE_CONFIG.shortTimeoutMs,
+        ),
+        backgroundMaxMs: numberEnv(
+          "PROVIDER_BACKGROUND_MAX_MS",
+          DEFAULT_ENGINE_CONFIG.backgroundMaxMs,
+        ),
       },
       log: (event, details) => console.log(JSON.stringify({ event, worker: workerId, ...details })),
     });

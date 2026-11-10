@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FakeOpenAI } from "../support/fake-openai.ts";
 import {
+  admin,
   campaignStatus,
   closeConnections,
   createCampaign,
@@ -559,5 +560,53 @@ describe("campaign window", () => {
       [campaign.id],
     );
     expect(new Date(last!.last).getTime()).toBeLessThan(end.getTime());
+  });
+});
+
+describe("queue activation", () => {
+  it("stores the consumer settings in Vault and puts back a schedule that was removed", async () => {
+    await sql("select cron.unschedule('lr-maintenance')");
+    await expect(
+      rpc(admin(), "svc_configure_worker", {
+        p_functions_base_url: "http://kong:8000",
+        p_worker_secret: "too-short",
+      }),
+    ).rejects.toThrow(/at least 24 characters/);
+
+    try {
+      await rpc(admin(), "svc_configure_worker", {
+        p_functions_base_url: "http://kong:8000",
+        p_worker_secret: "s".repeat(40),
+      });
+      // Activating twice changes nothing: one job per schedule, never a duplicate.
+      await rpc(admin(), "svc_configure_worker", {
+        p_functions_base_url: "http://kong:8000",
+        p_worker_secret: "s".repeat(40),
+      });
+
+      const jobs = await sql<{ jobname: string; n: string }>(
+        "select jobname, count(*)::text as n from cron.job where jobname like 'lr-%' group by jobname order by jobname",
+      );
+      expect(jobs).toEqual([
+        { jobname: "lr-dispatch", n: "1" },
+        { jobname: "lr-maintenance", n: "1" },
+        { jobname: "lr-plan", n: "1" },
+      ]);
+      const secrets = await sql<{ name: string }>(
+        "select name from vault.secrets where name in ('lr_functions_base_url', 'lr_worker_secret') order by name",
+      );
+      expect(secrets.map((secret) => secret.name)).toEqual([
+        "lr_functions_base_url",
+        "lr_worker_secret",
+      ]);
+    } finally {
+      // Back to the state the other tests rely on: no HTTP wake-ups, schedules paused.
+      await sql(
+        "delete from vault.secrets where name in ('lr_functions_base_url', 'lr_worker_secret')",
+      );
+      await sql(
+        "select cron.alter_job(jobid, active := false) from cron.job where jobname like 'lr-%'",
+      );
+    }
   });
 });

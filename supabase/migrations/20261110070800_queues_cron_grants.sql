@@ -17,9 +17,7 @@ revoke all on table pgmq.a_lr_work from public, anon, authenticated;
 -- act on campaigns a person has launched.
 -- ---------------------------------------------------------------------------------------------
 
-select cron.schedule('lr-dispatch', '10 seconds', $$select app_private.cron_dispatch()$$);
-select cron.schedule('lr-plan', '* * * * *', $$select app_private.cron_plan()$$);
-select cron.schedule('lr-maintenance', '17 3 * * *', $$select app_private.cron_maintenance()$$);
+select app_private.ensure_schedules();
 
 -- ---------------------------------------------------------------------------------------------
 -- API surface: deny everything, then grant an explicit allowlist.

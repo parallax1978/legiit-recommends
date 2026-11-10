@@ -526,8 +526,8 @@ export async function CampaignResults({
             Conversations
           </h2>
           <p className="text-ink-muted text-[13px]">
-            What the model answered inside the campaign&apos;s own conversations. Test conversations are
-            left out. Each model-and-settings combination is reported on its own.
+            What the model answered inside the campaign&apos;s own conversations. Test conversations
+            are left out. Each model-and-settings combination is reported on its own.
           </p>
         </div>
         {cohorts.length > 1 ? (

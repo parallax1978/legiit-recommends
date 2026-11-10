@@ -236,7 +236,9 @@ async function FreshCheck({ params }: { params: Promise<{ id: string }> }) {
                   {
                     term: "Earlier turns",
                     value:
-                      sent && "previous_response_id" in sent && sent.previous_response_id ? (
+                      sent === undefined ? (
+                        "Not sent yet"
+                      ) : sent.chained === true ? (
                         <span className="text-bad">Continued from a previous response</span>
                       ) : (
                         "None — a new context"
@@ -245,7 +247,9 @@ async function FreshCheck({ params }: { params: Promise<{ id: string }> }) {
                   {
                     term: "Instructions",
                     value:
-                      sent && "instructions" in sent && sent.instructions ? (
+                      sent === undefined ? (
+                        "Not sent yet"
+                      ) : sent.has_instructions === true ? (
                         <span className="text-bad">Present</span>
                       ) : (
                         "None"

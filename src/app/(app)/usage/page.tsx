@@ -613,8 +613,8 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
             </TableWrap>
             {isOwner ? (
               <Callout tone="neutral" className="mt-3">
-                Check the provider&apos;s usage dashboard for the time shown. “Count as spent” records
-                the reserved amount as cost; “Release” returns it to the budgets.
+                Check the provider&apos;s usage dashboard for the time shown. “Count as spent”
+                records the reserved amount as cost; “Release” returns it to the budgets.
               </Callout>
             ) : null}
           </>

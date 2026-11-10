@@ -9,3 +9,5 @@ test-results
 coverage
 *.sql
 AGENTS.md
+supabase/templates
+tsconfig.tsbuildinfo

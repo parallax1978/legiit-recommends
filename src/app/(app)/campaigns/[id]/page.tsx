@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CampaignControls, TestConversationButton } from "@/components/campaigns/campaign-actions";
 import { ConfigSummary } from "@/components/campaigns/config-summary";
+import { WordingCoverage } from "@/components/campaigns/wording-coverage";
 import { Meter } from "@/components/charts/figures";
 import { RetryJobButton } from "@/components/operations-buttons";
 import { CampaignResults } from "@/components/results/campaign-results";
@@ -607,6 +608,9 @@ async function ConversationsTab({
   }
   return (
     <div className="flex flex-col gap-3">
+      <div className="mb-3">
+        <WordingCoverage supabase={supabase} campaignId={campaign.id} />
+      </div>
       <RunsTable rows={rows} showCampaign={false} />
       <p className="text-ink-muted text-xs">
         Showing the latest {formatNumber(rows.length)} of {formatNumber(total)}.{" "}
