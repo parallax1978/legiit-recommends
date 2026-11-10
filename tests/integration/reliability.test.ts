@@ -466,12 +466,24 @@ describe("provider failures", () => {
 
     // The health view tells the owner what is wrong.
     const health = await rpc<{
-      workspace: { connections: { status: string; status_code: string }[] };
+      workspace: {
+        connections: { status: string; status_code: string }[];
+        provider_errors_24h: Record<string, number>;
+      };
     }>(workspace.owner.client, "operational_status", { p_workspace_id: workspace.id });
     expect(health.workspace.connections[0]).toMatchObject({
       status: "error",
       status_code: "invalid_credentials",
     });
+
+    // The failed request is counted as a provider error. The settings the model declined while
+    // it was being verified are not: that is how verification learns what a model accepts.
+    const [declined] = await sql<{ n: number }>(
+      "select count(*)::int as n from public.provider_attempts where workspace_id = $1 and purpose = 'model_probe' and status = 'failed' and error_class = 'invalid_request'",
+      [workspace.id],
+    );
+    expect(declined!.n).toBeGreaterThan(0);
+    expect(health.workspace.provider_errors_24h).toEqual({ invalid_credentials: 1 });
 
     // After the owner fixes the key and the connection test succeeds, the blocked job continues.
     fake.reset();

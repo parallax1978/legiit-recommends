@@ -241,3 +241,34 @@ test("a canceled campaign can be archived, restored from the archive view and de
     await count("select count(*)::text as n from public.campaigns where name = $1", [ORIGINAL]),
   ).toBe(1);
 });
+
+test("a signed-in person can change their password after confirming the current one", async () => {
+  const replacement = "E2E-owner-password-02";
+  const form = async (current: string, next: string) => {
+    await page.goto("/settings?tab=profile");
+    await page.getByLabel("Current password").fill(current);
+    await page.getByLabel("New password", { exact: true }).fill(next);
+    await page.getByLabel("Confirm new password").fill(next);
+    await page.getByRole("button", { name: "Change password" }).click();
+  };
+
+  // A session alone is not enough: the current password has to be right.
+  await form("not-the-current-password", replacement);
+  await expect(page.getByText("Your current password is not correct.")).toBeVisible();
+
+  await form(OWNER.password, replacement);
+  await expect(page.getByText("Password changed.")).toBeVisible();
+
+  // The old password no longer works; the new one does.
+  await page.getByRole("button", { name: /Account menu/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/sign-in/);
+  await signIn(page, OWNER);
+  await expect(page.getByRole("alert").filter({ hasText: "do not match" })).toBeVisible();
+  await signIn(page, { email: OWNER.email, password: replacement });
+  await expect(page).toHaveURL(/\/overview/);
+
+  // Put the original back so the suites that follow can sign in.
+  await form(replacement, OWNER.password);
+  await expect(page.getByText("Password changed.")).toBeVisible();
+});

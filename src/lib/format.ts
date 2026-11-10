@@ -10,6 +10,9 @@ export function formatUsd(
   if (value === null || value === undefined || value === "") return NO_VALUE;
   const amount = Number(value);
   if (!Number.isFinite(amount)) return NO_VALUE;
+  // A real but tiny cost (one small request can be a few thousandths of a cent) must not read
+  // as zero.
+  if (isBelowDisplay(amount)) return amount < 0 ? "-<$0.0001" : "<$0.0001";
   const small = Math.abs(amount) > 0 && Math.abs(amount) < 1;
   const digits = options.precise || small ? 4 : 2;
   return new Intl.NumberFormat("en-US", {
@@ -18,6 +21,11 @@ export function formatUsd(
     minimumFractionDigits: amount === 0 ? 2 : Math.min(digits, 2),
     maximumFractionDigits: amount === 0 ? 2 : digits,
   }).format(amount);
+}
+
+/** Non-zero, but smaller than the four decimals money is shown with. */
+export function isBelowDisplay(amount: number): boolean {
+  return amount !== 0 && Math.abs(amount) < 0.00005;
 }
 
 export function formatNumber(value: number | string | null | undefined): string {

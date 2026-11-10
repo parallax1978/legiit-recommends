@@ -27,6 +27,36 @@ test.describe("access control at the door", () => {
     await expect(page).toHaveURL(/\/sign-in/);
   });
 
+  test("signing in never sends anyone to another site", async ({ page }) => {
+    // Browsers drop tabs inside URLs, so "/<TAB>/host" means "//host": another site.
+    for (const next of [
+      "/%09/evil.example",
+      "//evil.example",
+      "/%5Cevil.example",
+      "/.//evil.example",
+    ]) {
+      await page.goto(`/sign-in?next=${next}`);
+      await page.getByLabel("Email").fill(OWNER.email);
+      await page.getByLabel("Password").fill(OWNER.password);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      // The owner has no workspace yet in this suite, so the safe default leads to setup.
+      await expect(page, next).toHaveURL(/localhost:3000\/(setup|overview)/);
+      await page.context().clearCookies();
+    }
+  });
+
+  test("an email link with a missing or unknown token does nothing", async ({ page }) => {
+    await page.goto("/auth/confirm");
+    await expect(page.getByRole("heading", { name: "This link is incomplete" })).toBeVisible();
+    await page.goto("/auth/confirm?token_hash=not-a-real-token&type=recovery&next=/reset-password");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "invalid or has expired" }),
+    ).toBeVisible();
+    await page.goto("/reset-password");
+    await expect(page).toHaveURL(/\/sign-in/);
+  });
+
   test("public sign-up is disabled", async ({ request }) => {
     const local = stack();
     const response = await request.post(`${local.apiUrl}/auth/v1/signup`, {

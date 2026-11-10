@@ -3,17 +3,22 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import type { EmailOtpType } from "@supabase/supabase-js";
 import { fail, fromDbError, ok, type ActionResult } from "@/lib/result";
+import { safeNextPath } from "@/lib/safe-path";
 import { WORKSPACE_COOKIE, getIdentity } from "@/lib/session";
 import { createClient } from "@/lib/supabase/server";
 
 const MIN_PASSWORD = 10;
-
-/** Only same-site paths are accepted as a post-login destination. */
-function safeNext(value: FormDataEntryValue | null | undefined, fallback = "/overview"): string {
-  const next = typeof value === "string" ? value : "";
-  return next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : fallback;
-}
+const LINK_TYPES: readonly string[] = [
+  "invite",
+  "recovery",
+  "email",
+  "magiclink",
+  "email_change",
+  "signup",
+];
+const LINK_INVALID = "That link is invalid or has expired. Request a new one.";
 
 const credentials = z.object({
   email: z.email("Enter a valid email address.").transform((value) => value.trim().toLowerCase()),
@@ -41,7 +46,31 @@ export async function signIn(
     // One message for every failure: never reveal whether an account exists.
     return fail("That email and password do not match an account.", "invalid_credentials");
   }
-  redirect(safeNext(formData.get("next")));
+  redirect(safeNextPath(formData.get("next"), "/overview"));
+}
+
+/**
+ * Completes a one-time email link (invitation, password reset, sign-in link). It runs when the
+ * person presses the button on /auth/confirm, never when the link is merely opened: mail
+ * scanners and chat previews fetch links, and a link that signed people in on a plain GET
+ * would be used up before its owner ever clicked it.
+ */
+export async function confirmEmailLink(
+  _previous: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const tokenHash = String(formData.get("token_hash") ?? "");
+  const type = String(formData.get("type") ?? "");
+  if (!tokenHash || !LINK_TYPES.includes(type)) return fail(LINK_INVALID, "link_invalid");
+  const fallback =
+    type === "invite" ? "/accept-invite" : type === "recovery" ? "/reset-password" : "/overview";
+  const supabase = await createClient();
+  const { error } = await supabase.auth.verifyOtp({
+    type: type as EmailOtpType,
+    token_hash: tokenHash,
+  });
+  if (error) return fail(LINK_INVALID, "link_invalid");
+  redirect(safeNextPath(formData.get("next"), fallback));
 }
 
 export async function requestPasswordReset(
@@ -100,6 +129,54 @@ export async function updatePassword(
         : "The password could not be updated. Request a new link and try again.",
     );
   redirect("/overview");
+}
+
+/**
+ * Changes the password of the signed-in user without any email round trip. A session alone is
+ * not enough: the current password is checked first, so an unattended browser cannot be used
+ * to take over the account.
+ */
+export async function changePassword(
+  _previous: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const current = String(formData.get("current_password") ?? "");
+  if (!current) {
+    return fail("Enter your current password.", "invalid", {
+      current_password: "Enter your current password.",
+    });
+  }
+  const checked = validatePassword(formData);
+  if ("error" in checked) return checked.error;
+  if (checked.password === current) {
+    return fail("Choose a password that differs from the current one.", "invalid", {
+      password: "Choose a password that differs from the current one.",
+    });
+  }
+  const identity = await getIdentity();
+  if (!identity?.email) return fail("Sign in again to change your password.", "unauthorized");
+
+  const supabase = await createClient();
+  const verified = await supabase.auth.signInWithPassword({
+    email: identity.email,
+    password: current,
+  });
+  if (verified.error) {
+    if (verified.error.status === 429)
+      return fail("Too many attempts. Wait a minute and try again.", "rate_limited");
+    return fail("Your current password is not correct.", "invalid", {
+      current_password: "Your current password is not correct.",
+    });
+  }
+  const { error } = await supabase.auth.updateUser({ password: checked.password });
+  if (error) {
+    return fail(
+      error.message.includes("different")
+        ? "Choose a password you have not used before."
+        : "The password could not be changed. Try again.",
+    );
+  }
+  return ok("Password changed.");
 }
 
 export async function acceptInvite(

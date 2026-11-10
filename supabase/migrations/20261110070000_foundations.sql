@@ -17,8 +17,17 @@ create extension if not exists pg_cron with schema pg_catalog;
 create extension if not exists pg_net with schema extensions;
 create extension if not exists supabase_vault with schema vault;
 
-grant usage on schema cron to postgres;
-grant all privileges on all tables in schema cron to postgres;
+-- Closed by default: nothing created from here on is reachable through the API until a
+-- migration grants it (see 20261110071100_deny_new_objects_by_default.sql for the reasons;
+-- it repeats these statements for databases that were created before they were added here).
+alter default privileges for role postgres in schema public
+  revoke all on tables from anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all on sequences from anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all on functions from anon, authenticated, service_role;
+alter default privileges for role postgres
+  revoke execute on functions from public;
 
 create schema if not exists app_private;
 revoke all on schema app_private from public, anon, authenticated;

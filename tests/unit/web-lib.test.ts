@@ -10,7 +10,14 @@ import {
   rate,
   timeToMinutes,
 } from "@/lib/format";
+import {
+  axisFractionDigits,
+  axisWidth,
+  formatAxisTick,
+  formatChartValue,
+} from "@/components/charts/theme";
 import { first, likePattern, pageNumber, uuidParam } from "@/lib/params";
+import { describeWakes } from "@/lib/wakes";
 import { isValidTimeZone, offsetMinutes, utcToZonedInput, zonedInputToUtc } from "@/lib/timezone";
 
 describe("campaign timezone conversion", () => {
@@ -115,6 +122,118 @@ describe("figures shown in reports", () => {
     expect(formatUsd(12.5)).toBe("$12.50");
     expect(formatUsd(0.0032)).toBe("$0.0032");
     expect(formatUsd("40")).toBe("$40.00");
+    // One small request can cost a few thousandths of a cent: it is not shown as zero.
+    expect(formatUsd(0.00001)).toBe("<$0.0001");
+    expect(formatUsd(0.00001, { precise: true })).toBe("<$0.0001");
+    expect(formatUsd(0.00005)).toBe("$0.0001");
+    expect(formatUsd(0.0001)).toBe("$0.0001");
+  });
+
+  it("labels a money axis so that neighbouring gridlines never read the same", () => {
+    // A day of verification on a small model: fractions of a cent.
+    const tiny = [0, 0.00003, 0.00006, 0.00009, 0.00012].map((tick) =>
+      formatAxisTick(tick, "usd", 0.00012),
+    );
+    expect(tiny).toEqual(["$0", "$0.00003", "$0.00006", "$0.00009", "$0.00012"]);
+    expect(new Set(tiny).size).toBe(tiny.length);
+
+    expect([0, 0.15, 0.3, 0.45, 0.6].map((tick) => formatAxisTick(tick, "usd", 0.6))).toEqual([
+      "$0",
+      "$0.15",
+      "$0.30",
+      "$0.45",
+      "$0.60",
+    ]);
+    expect([0, 5, 10, 15, 20].map((tick) => formatAxisTick(tick, "usd", 20))).toEqual([
+      "$0",
+      "$5",
+      "$10",
+      "$15",
+      "$20",
+    ]);
+    expect(formatAxisTick(25_000, "usd", 50_000)).toBe("$25K");
+    expect(formatAxisTick(40, "number", 80)).toBe("40");
+    expect(formatAxisTick(50, "percent", 100)).toBe("50%");
+    expect(axisFractionDigits(0)).toBe(2);
+    expect(axisFractionDigits(0.5)).toBe(2);
+    expect(axisFractionDigits(0.00012)).toBe(5);
+    // Longer labels get more room so they are not clipped.
+    expect(axisWidth("usd", 0.00012)).toBeGreaterThan(axisWidth("usd", 20));
+    expect(formatChartValue(0.00001, "usd")).toBe("<$0.0001");
+    expect(formatChartValue(0.0032, "usd")).toBe("$0.0032");
+  });
+
+  it("says whether the queue consumer is really being reached, not just configured", () => {
+    const base = {
+      window_minutes: 15,
+      requested: 0,
+      accepted: 0,
+      rejected: 0,
+      failed: 0,
+      unanswered: 0,
+      last_accepted_at: null,
+      last_problem: null,
+    };
+    expect(describeWakes(false, base)).toMatchObject({ ok: false, detail: "Not activated" });
+    // Nothing queued lately: there is nothing to judge by, and no alarm.
+    expect(describeWakes(true, base)).toMatchObject({ ok: true, problem: null });
+    expect(describeWakes(true, undefined)).toMatchObject({ ok: true, problem: null });
+    expect(
+      describeWakes(true, {
+        ...base,
+        requested: 4,
+        accepted: 4,
+        last_accepted_at: "2026-11-10T17:05:04+00:00",
+      }),
+    ).toEqual({
+      ok: true,
+      detail: "Activated · 4 wake-ups accepted in the last 15 minutes",
+      problem: null,
+    });
+
+    // The settings exist, but the worker rejects every call: this used to look healthy.
+    const rejected = describeWakes(true, {
+      ...base,
+      requested: 6,
+      rejected: 6,
+      last_problem: { at: "2026-11-10T17:05:04+00:00", status_code: 401, error: null },
+    });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.detail).toBe("6 of 6 wake-ups failed (HTTP 401)");
+    expect(rejected.problem).toContain("does not match");
+
+    expect(
+      describeWakes(true, {
+        ...base,
+        requested: 2,
+        failed: 1,
+        unanswered: 1,
+        last_problem: { at: "2026-11-10T17:05:04+00:00", status_code: null, error: "timed out" },
+      }),
+    ).toMatchObject({ ok: false, detail: "2 of 2 wake-ups failed (timed out)" });
+
+    // A problem that has since cleared is not an alarm.
+    expect(
+      describeWakes(true, {
+        ...base,
+        requested: 5,
+        accepted: 3,
+        rejected: 2,
+        last_accepted_at: "2026-11-10T17:06:00+00:00",
+        last_problem: { at: "2026-11-10T17:05:04+00:00", status_code: 401, error: null },
+      }),
+    ).toMatchObject({ ok: true, problem: null });
+    // ...but one that came after the last success is.
+    expect(
+      describeWakes(true, {
+        ...base,
+        requested: 5,
+        accepted: 3,
+        rejected: 2,
+        last_accepted_at: "2026-11-10T17:04:00+00:00",
+        last_problem: { at: "2026-11-10T17:05:04+00:00", status_code: 404, error: null },
+      }),
+    ).toMatchObject({ ok: false, detail: "2 of 5 wake-ups failed (HTTP 404)" });
   });
 
   it("formats active hours and weekdays", () => {

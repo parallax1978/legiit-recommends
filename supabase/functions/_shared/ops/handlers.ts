@@ -782,8 +782,24 @@ export async function inviteMember(
     p_role: role,
   });
   if (recorded.error) return fromDbError(recorded.error);
-  const outcome = recorded.data as { outcome: string; invitation_id?: string };
+  const outcome = recorded.data as { outcome: string; invitation_id?: string; user_id?: string };
   if (outcome.outcome !== "invited") return { ok: true, outcome: outcome.outcome };
+
+  // An account that exists but was never confirmed did not come through an accepted
+  // invitation: its password, if it has one, was not chosen by the person being invited.
+  // Replace it with one nobody knows before the invitation link can confirm the account.
+  if (outcome.user_id) {
+    const scrambled = await ctx.admin.auth.admin.updateUserById(outcome.user_id, {
+      password: `${crypto.randomUUID()}${crypto.randomUUID()}`,
+    });
+    if (scrambled.error) {
+      await ctx.admin.rpc("svc_cancel_invitation", {
+        p_invitation_id: outcome.invitation_id,
+        p_reason: scrambled.error.message,
+      });
+      return fail("invite_failed", "The invitation could not be prepared. Try again.");
+    }
+  }
 
   const { error } = await ctx.admin.auth.admin.inviteUserByEmail(email, {
     ...(ctx.siteUrl ? { redirectTo: `${ctx.siteUrl.replace(/\/$/, "")}/accept-invite` } : {}),
@@ -818,12 +834,21 @@ export async function runOpsAction(
   action: string,
   input: Record<string, unknown>,
 ): Promise<OpsResult> {
-  const handler = (
-    OPS_ACTIONS as Record<
-      string,
-      (ctx: OpsContext, input: Record<string, unknown>) => Promise<OpsResult>
-    >
-  )[action];
-  if (!handler) return fail("unknown_action", "Unknown operation.");
+  // Own properties only: a plain lookup would also find what every object inherits
+  // ("constructor", "toString", …) and call it as if it were a handler.
+  if (!Object.hasOwn(OPS_ACTIONS, action)) return fail("unknown_action", "Unknown operation.");
+  const handler = OPS_ACTIONS[action as OpsAction] as (
+    ctx: OpsContext,
+    input: Record<string, unknown>,
+  ) => Promise<OpsResult>;
   return handler(ctx, input);
+}
+
+/** True for the only shape a handler may return; anything else must not be sent to a caller. */
+export function isOpsResult(value: unknown): value is OpsResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { ok?: unknown }).ok === "boolean"
+  );
 }

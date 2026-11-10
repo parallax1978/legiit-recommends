@@ -261,6 +261,21 @@ content_path = "./supabase/templates/invite.html"
 subject = "Reset your Legiit Recommends password"
 content_path = "./supabase/templates/recovery.html"
 
+# The app never sends the three emails below itself, but the Auth server will send a sign-in
+# link to any existing address on request. Their default templates link to the Auth server with
+# a caller-supplied redirect; these link to the web app instead, like the two above.
+[auth.email.template.magic_link]
+subject = "Your Legiit Recommends sign-in link"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.email.template.confirmation]
+subject = "Confirm your Legiit Recommends email address"
+content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.email_change]
+subject = "Confirm your new Legiit Recommends email address"
+content_path = "./supabase/templates/email_change.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true

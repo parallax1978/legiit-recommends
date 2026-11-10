@@ -265,6 +265,69 @@ describe("workspace isolation", () => {
     }
   });
 
+  it("keeps newly created objects closed to every API role until a migration grants them", async () => {
+    // What a later migration would create, with no grants at all. The block always raises, so
+    // nothing it creates survives; the privileges it observed travel out in the message.
+    const probe = `do $probe$
+      declare v jsonb;
+      begin
+        create table public.lr_default_probe (id integer);
+        create sequence public.lr_default_probe_seq;
+        create function public.lr_default_probe_fn() returns integer language sql as 'select 1';
+        create function app_private.lr_default_probe_fn() returns integer language sql as 'select 1';
+        select jsonb_object_agg(r.rolname, jsonb_build_object(
+          'table', has_table_privilege(r.rolname, 'public.lr_default_probe', 'select,insert,update,delete,truncate'),
+          'sequence', has_sequence_privilege(r.rolname, 'public.lr_default_probe_seq', 'usage,select,update'),
+          'function', has_function_privilege(r.rolname, 'public.lr_default_probe_fn()', 'execute'),
+          'private_function', has_function_privilege(r.rolname, 'app_private.lr_default_probe_fn()', 'execute')
+        )) into v
+        from pg_roles r where r.rolname in ('anon', 'authenticated', 'service_role');
+        raise exception 'probe:%', v;
+      end $probe$;`;
+    const error = await sql(probe).then(
+      () => null,
+      (reason: Error) => reason,
+    );
+    const observed = /probe:(\{.*\})/s.exec(error?.message ?? "")?.[1];
+    expect(observed, error?.message).toBeTruthy();
+    const closed = { table: false, sequence: false, function: false, private_function: false };
+    expect(JSON.parse(observed!)).toEqual({
+      anon: closed,
+      authenticated: closed,
+      service_role: closed,
+    });
+    expect(await sql("select to_regclass('public.lr_default_probe')::text as left_behind")).toEqual(
+      [{ left_behind: null }],
+    );
+  });
+
+  it("does not let a password set before an invitation survive it", async () => {
+    // Someone registered the address before the workspace owner invited it (possible while
+    // public sign-up was still open on the project). The account was never confirmed.
+    const email = `early-${Date.now().toString(36)}@lr.test`;
+    const planted = "Planted-password-123";
+    const created = await admin().auth.admin.createUser({
+      email,
+      password: planted,
+      email_confirm: false,
+    });
+    expect(created.error).toBeNull();
+
+    const invited = await ops(alpha.owner, fake, "members.invite", {
+      workspace_id: alpha.id,
+      email,
+      role: "member",
+    });
+    expect(invited).toMatchObject({ ok: true, outcome: "invited" });
+
+    // Opening the invitation confirms that same account. The earlier password must be useless
+    // from that moment on, not only after the invited person has chosen their own.
+    await admin().auth.admin.updateUserById(created.data.user!.id, { email_confirm: true });
+    const attempt = await anonClient().auth.signInWithPassword({ email, password: planted });
+    expect(attempt.data.session).toBeNull();
+    expect(attempt.error).not.toBeNull();
+  });
+
   it("does not let a known id from another workspace grant access through any RPC", async () => {
     const stranger = beta.owner.client;
     const calls: [string, Record<string, unknown>][] = [

@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { CHART_INK, formatAxisTick, formatChartValue, type ValueFormat } from "./theme";
+import { CHART_INK, axisWidth, formatAxisTick, formatChartValue, type ValueFormat } from "./theme";
 
 export interface ChartSeries {
   key: string;
@@ -135,7 +135,7 @@ export function TimeBarChart({
   height?: number;
   ariaLabel: string;
 }) {
-  const compact = maxOf(data, series, true) >= 10_000;
+  const axisMax = maxOf(data, series, true);
   return (
     <div role="img" aria-label={ariaLabel} style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -158,8 +158,8 @@ export function TimeBarChart({
             tickLine={false}
             axisLine={false}
             tick={axisTick}
-            width={56}
-            tickFormatter={(value: number) => formatAxisTick(value, format, compact)}
+            width={axisWidth(format, axisMax)}
+            tickFormatter={(value: number) => formatAxisTick(value, format, axisMax)}
             allowDecimals={format !== "number"}
           />
           <Tooltip

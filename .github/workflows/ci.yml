@@ -1,12 +1,14 @@
 name: CI
 
+# Every push to every branch, so the branch Vercel deploys from is always covered, plus pull
+# requests from forks (pushes to a fork do not run here).
 on:
   push:
-    branches: [main]
   pull_request:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # A push and the pull request for the same branch share one group, so only one of them runs.
+  group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
@@ -54,6 +56,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Give the local Edge Functions their settings
+        # One test lets the database call the real local worker function with its secret.
+        run: cp supabase/functions/.env.example supabase/functions/.env
       - name: Start the local Supabase stack (applies every migration)
         run: npx supabase start -x studio,imgproxy,logflare,vector,supavisor,storage-api
       - name: Lint database functions

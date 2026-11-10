@@ -1,6 +1,7 @@
 // Shapes returned by the reporting database functions (see supabase/migrations/*functions*).
 
 import type { Database } from "@/lib/supabase/database.types";
+import type { WakeSummary } from "@/lib/wakes";
 
 export type Tables = Database["public"]["Tables"];
 export type Row<T extends keyof Tables> = Tables[T]["Row"];
@@ -133,6 +134,8 @@ export interface OperationalStatus {
     }
   >;
   consumers_activated: boolean;
+  /** Absent only while the database is one migration behind the web app. */
+  wakes?: WakeSummary | null;
   queue: { length: number; visible: number; oldest_message_age_seconds: number | null };
   workspace: {
     emergency_stop: boolean;

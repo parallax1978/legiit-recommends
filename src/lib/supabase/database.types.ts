@@ -1023,6 +1023,12 @@ isOneToOne: false
 "svc_upsert_provider_models":
 { Args: { "p_connection_id": string,"p_models": Json }; Returns: number
                            },
+"svc_wake_check":
+{ Args: Record<PropertyKey, never>; Returns: number
+                           },
+"svc_wake_result":
+{ Args: { "p_request_id": number }; Returns: Json
+                           },
 "update_connection":
 { Args: { "p_connection_id": string,"p_patch": Json }; Returns: undefined
                            },

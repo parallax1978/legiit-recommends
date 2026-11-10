@@ -6,7 +6,7 @@
 // token is verified with the Auth server here, and each handler authorizes that user against
 // the workspace of the record it touches. The service key never leaves this function.
 
-import { runOpsAction } from "../_shared/ops/handlers.ts";
+import { isOpsResult, runOpsAction } from "../_shared/ops/handlers.ts";
 import { createOpenAIProvider } from "../_shared/provider/openai.ts";
 import { adminClient, env, json, providerBaseUrl } from "../_shared/edge/runtime.ts";
 
@@ -53,6 +53,9 @@ export default {
         body.action,
         (body.input && typeof body.input === "object" ? body.input : {}) as Record<string, unknown>,
       );
+      // Only a well-formed result is ever serialised: the context that handlers receive holds
+      // the service-role client and must never be echoed, whatever a handler returns.
+      if (!isOpsResult(result)) throw new Error("handler returned a malformed result");
       // Domain failures are returned with 200 so callers always receive the structured result.
       return json(result);
     } catch (error) {

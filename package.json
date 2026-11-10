@@ -31,6 +31,8 @@
     "functions:serve": "supabase functions serve --env-file supabase/functions/.env",
     "bootstrap:owner": "tsx scripts/bootstrap-owner.ts",
     "queues:activate": "tsx scripts/activate-queues.ts",
+    "db:push:api": "tsx scripts/apply-migrations.ts",
+    "auth:configure": "tsx scripts/configure-auth.ts",
     "fake-openai": "tsx tests/support/fake-openai-server.ts",
     "smoke:live": "tsx scripts/live-smoke.ts",
     "deploy:supabase": "bash scripts/deploy-supabase.sh",

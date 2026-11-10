@@ -9,6 +9,7 @@ import {
   createWorkspace,
   drain,
   launch,
+  localWorkerSecret,
   resetDatabase,
   rpc,
   sql,
@@ -607,6 +608,89 @@ describe("queue activation", () => {
       await sql(
         "select cron.alter_job(jobid, active := false) from cron.job where jobname like 'lr-%'",
       );
+    }
+  });
+
+  it("shows whether the database's wake-ups actually reach the worker", async () => {
+    const workspace = await createWorkspace();
+    type Wakes = {
+      requested: number;
+      accepted: number;
+      rejected: number;
+      last_accepted_at: string | null;
+      last_problem: { status_code: number | null } | null;
+    };
+    const wakes = async () =>
+      (
+        await rpc<{ wakes: Wakes }>(workspace.owner.client, "operational_status", {
+          p_workspace_id: workspace.id,
+        })
+      ).wakes;
+    // One wake-up from the database to the real local worker function, and its answer.
+    const wake = async () => {
+      const requestId = await rpc<number>(admin(), "svc_wake_check");
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const result = await rpc<{ done: boolean; status_code?: number | null }>(
+          admin(),
+          "svc_wake_result",
+          { p_request_id: requestId },
+        );
+        if (result.done) return result;
+        await new Promise((done) => setTimeout(done, 500));
+      }
+      throw new Error("pg_net recorded no response for the wake-up");
+    };
+    await sql("delete from app_private.worker_wakes");
+
+    // Not activated: there is nothing to call, and the check says so.
+    await expect(rpc(admin(), "svc_wake_check")).rejects.toThrow(/not activated/);
+    expect(await wakes()).toMatchObject({ requested: 0 });
+
+    try {
+      // "Activated" with a secret the function does not have: every wake-up is rejected, and
+      // that is now visible instead of looking healthy.
+      await rpc(admin(), "svc_configure_worker", {
+        p_functions_base_url: "http://kong:8000",
+        p_worker_secret: "w".repeat(40),
+      });
+      await sql(
+        "select cron.alter_job(jobid, active := false) from cron.job where jobname like 'lr-%'",
+      );
+      expect(await wake()).toMatchObject({ done: true, status_code: 401 });
+      expect(await wakes()).toMatchObject({
+        requested: 1,
+        accepted: 0,
+        rejected: 1,
+        last_accepted_at: null,
+        last_problem: { status_code: 401 },
+      });
+
+      // With the function's real secret the worker accepts the wake-up (and finds no work).
+      await rpc(admin(), "svc_configure_worker", {
+        p_functions_base_url: "http://kong:8000",
+        p_worker_secret: localWorkerSecret(),
+      });
+      await sql(
+        "select cron.alter_job(jobid, active := false) from cron.job where jobname like 'lr-%'",
+      );
+      expect(await wake()).toMatchObject({ done: true, status_code: 202 });
+      const after = await wakes();
+      expect(after).toMatchObject({ requested: 2, accepted: 1, rejected: 1 });
+      expect(after.last_accepted_at).not.toBeNull();
+
+      // Browser roles can neither send a wake-up nor read one.
+      await expect(rpc(workspace.owner.client, "svc_wake_check")).rejects.toThrow();
+      await expect(
+        rpc(workspace.owner.client, "svc_wake_result", { p_request_id: 1 }),
+      ).rejects.toThrow();
+    } finally {
+      await sql(
+        "delete from vault.secrets where name in ('lr_functions_base_url', 'lr_worker_secret')",
+      );
+      await sql(
+        "select cron.alter_job(jobid, active := false) from cron.job where jobname like 'lr-%'",
+      );
+      await sql("delete from app_private.worker_wakes");
     }
   });
 });

@@ -51,7 +51,8 @@ async function loadPrice(model: string): Promise<PriceRow> {
     };
   }
   if (env("SUPABASE_URL") && (env("SUPABASE_SECRET_KEY") ?? env("SUPABASE_SERVICE_ROLE_KEY"))) {
-    const { data } = await adminClient()
+    const admin = await adminClient();
+    const { data } = await admin
       .from("model_prices")
       .select("*")
       .eq("provider", "openai")

@@ -6,6 +6,7 @@ import { startTransition, useActionState, type FormEvent } from "react";
 import {
   acceptInvite,
   completeSetup,
+  confirmEmailLink,
   requestPasswordReset,
   signIn,
   updatePassword,
@@ -151,6 +152,42 @@ function PasswordFields({ state }: { state: ActionResult | null }) {
         />
       </Field>
     </>
+  );
+}
+
+/**
+ * The button that completes a one-time email link. The token travels in hidden fields and is
+ * only used when the form is submitted.
+ */
+export function ConfirmLinkForm({
+  tokenHash,
+  type,
+  next,
+  label,
+}: {
+  tokenHash: string;
+  type: string;
+  next: string;
+  label: string;
+}) {
+  const { state, action, onSubmit, pending } = useFormAction(confirmEmailLink);
+  return (
+    <form action={action} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+      <FormMessage state={state} />
+      <input type="hidden" name="token_hash" value={tokenHash} />
+      <input type="hidden" name="type" value={type} />
+      <input type="hidden" name="next" value={next} />
+      <SubmitButton pending={pending} size="lg" className="w-full">
+        {label}
+      </SubmitButton>
+      {state && !state.ok ? (
+        <p className="text-ink-muted text-center text-[13px]">
+          <Link href="/sign-in" className="text-brand hover:text-brand-strong font-medium">
+            Back to sign in
+          </Link>
+        </p>
+      ) : null}
+    </form>
   );
 }
 

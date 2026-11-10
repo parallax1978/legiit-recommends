@@ -4,12 +4,24 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { projectRef, secretKeyFromApi } from "./management";
 
 /**
- * Loads .env.operator, .env.local and .env from the repository root without overriding variables
- * that are already set. Operator secrets live in .env.operator, which Next.js does not read.
+ * Loads operator values without overriding variables that are already set.
+ *
+ * By default it reads .env.operator, .env.local and .env from the repository root (operator
+ * secrets live in .env.operator, which Next.js does not read). Set ENV_FILE to read exactly one
+ * other file instead, for example a file for the hosted project next to the one that
+ * `npm run env:local` writes for the local stack — values from the two are then never mixed.
  */
 export function loadEnvFiles(): void {
+  const chosen = process.env.ENV_FILE?.trim();
+  if (chosen) {
+    const path = resolve(process.cwd(), chosen);
+    if (!existsSync(path)) fail(`ENV_FILE points at ${chosen}, which does not exist.`);
+    process.loadEnvFile(path);
+    return;
+  }
   for (const name of [".env.operator", ".env.local", ".env"]) {
     const path = resolve(process.cwd(), name);
     if (existsSync(path)) process.loadEnvFile(path);
@@ -57,24 +69,42 @@ export function parseArgs(argv: string[]): Record<string, string | true> {
 }
 
 export function supabaseUrl(): string {
-  return (
-    env("SUPABASE_URL") ??
-    env("NEXT_PUBLIC_SUPABASE_URL") ??
-    fail(
-      "Set SUPABASE_URL (for example https://<project-ref>.supabase.co, or http://127.0.0.1:54321 locally).",
-    )
+  const explicit = env("SUPABASE_URL") ?? env("NEXT_PUBLIC_SUPABASE_URL");
+  if (explicit) return explicit;
+  const ref = env("SUPABASE_PROJECT_REF");
+  if (ref) return `https://${ref}.supabase.co`;
+  fail(
+    "Set SUPABASE_URL (for example https://<project-ref>.supabase.co, or http://127.0.0.1:54321 locally) or SUPABASE_PROJECT_REF.",
   );
 }
 
-/** Service-role client. The key is read from the environment and never printed. */
-export function adminClient(): SupabaseClient {
-  const key =
-    env("SUPABASE_SECRET_KEY") ??
-    env("SUPABASE_SERVICE_ROLE_KEY") ??
+export function isLocalUrl(url: string): boolean {
+  return /\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(url);
+}
+
+/**
+ * Service-role client. The key is read from SUPABASE_SECRET_KEY, or fetched through the
+ * Management API when only an access token and project ref are configured. It is never printed.
+ */
+export async function adminClient(): Promise<SupabaseClient> {
+  const url = supabaseUrl();
+  let key = env("SUPABASE_SECRET_KEY") ?? env("SUPABASE_SERVICE_ROLE_KEY");
+  if (!key && !isLocalUrl(url) && projectRef()) {
+    try {
+      key = await secretKeyFromApi();
+    } catch (error) {
+      fail(
+        `Could not read the project's secret key through the Management API: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (!key) {
     fail(
-      "Set SUPABASE_SECRET_KEY to the project's secret (service role) key. Find it under Project Settings → API keys.",
+      "Set SUPABASE_SECRET_KEY to the project's secret (service role) key (Project Settings → API keys), " +
+        "or set SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF so it can be read for you.",
     );
-  return createClient(supabaseUrl(), key, {
+  }
+  return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

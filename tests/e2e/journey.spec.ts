@@ -508,7 +508,15 @@ test("an invited member accepts by email and can view and export, but not manage
 
   const context = await browser.newContext();
   const member = await context.newPage();
-  await member.goto(await linkFromEmail(MEMBER.email, "invited"));
+  const inviteLink = await linkFromEmail(MEMBER.email, "invited");
+  // Mail scanners and chat previews fetch links. Fetching this one must not use it up or
+  // sign anyone in: the one-time token is only spent when the person presses the button.
+  const scanned = await member.request.get(inviteLink, { maxRedirects: 0 });
+  expect(scanned.status()).toBe(200);
+  expect(scanned.headers()["set-cookie"] ?? "").not.toContain("auth-token");
+  await member.goto(inviteLink);
+  await expect(member.getByRole("heading", { name: "Accept your invitation" })).toBeVisible();
+  await member.getByRole("button", { name: "Continue" }).click();
   await expect(member).toHaveURL(/\/accept-invite/);
   await member.getByLabel("Your name").fill("Morgan Member");
   await member.getByLabel("New password").fill(MEMBER.password);
@@ -540,7 +548,10 @@ test("an invited member accepts by email and can view and export, but not manage
   await member.getByLabel("Email").fill(MEMBER.email);
   await member.getByRole("button", { name: "Send reset link" }).click();
   await expect(member.getByText("If an account exists for that address")).toBeVisible();
-  await member.goto(await linkFromEmail(MEMBER.email, "Reset"));
+  const resetLink = await linkFromEmail(MEMBER.email, "Reset");
+  await member.goto(resetLink);
+  await expect(member.getByRole("heading", { name: "Reset your password" })).toBeVisible();
+  await member.getByRole("button", { name: "Continue" }).click();
   await expect(member).toHaveURL(/\/reset-password/);
   const newPassword = `${MEMBER.password}-changed`;
   await member.getByLabel("New password").fill(newPassword);
@@ -555,5 +566,16 @@ test("an invited member accepts by email and can view and export, but not manage
   await expect(member.getByRole("alert").filter({ hasText: "do not match" })).toBeVisible();
   await signIn(member, { email: MEMBER.email, password: newPassword });
   await expect(member).toHaveURL(/\/overview/);
+
+  // A one-time link cannot be used twice, and the page says so instead of failing silently.
+  await member.getByRole("button", { name: /Account menu/ }).click();
+  await member.getByRole("menuitem", { name: "Sign out" }).click();
+  await expect(member).toHaveURL(/\/sign-in/);
+  await member.goto(resetLink);
+  await member.getByRole("button", { name: "Continue" }).click();
+  await expect(
+    member.getByRole("alert").filter({ hasText: "invalid or has expired" }),
+  ).toBeVisible();
+  await expect(member).toHaveURL(/\/auth\/confirm/);
   await context.close();
 });

@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge, Callout } from "@/components/ui/card";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Input, Label, Select } from "@/components/ui/form";
+import { changePassword } from "@/lib/actions/auth";
 import {
   deleteWorkspace,
   inviteMember,
@@ -25,6 +26,43 @@ import {
 } from "@/lib/actions/settings";
 
 type Role = "owner" | "admin" | "member";
+
+/** Lets a signed-in person replace their password without waiting for an email. */
+export function ChangePasswordForm() {
+  return (
+    <ActionForm action={changePassword} resetOnSuccess className="flex max-w-md flex-col gap-4">
+      <TextField
+        name="current_password"
+        label="Current password"
+        type="password"
+        autoComplete="current-password"
+        required
+      />
+      <TextField
+        name="password"
+        id="new-password"
+        label="New password"
+        type="password"
+        autoComplete="new-password"
+        hint="At least 10 characters."
+        minLength={10}
+        required
+      />
+      <TextField
+        name="confirm"
+        id="confirm-new-password"
+        label="Confirm new password"
+        type="password"
+        autoComplete="new-password"
+        required
+      />
+      <FormError />
+      <div>
+        <FormSubmit>Change password</FormSubmit>
+      </div>
+    </ActionForm>
+  );
+}
 
 export function ProfileForm({ displayName, email }: { displayName: string; email: string }) {
   return (

@@ -14,6 +14,7 @@ import {
   VerifyModelForm,
 } from "@/components/settings/connection-panels";
 import {
+  ChangePasswordForm,
   DeleteWorkspaceForm,
   EmergencyStopControl,
   InviteForm,
@@ -42,6 +43,7 @@ import { first, type SearchParams } from "@/lib/params";
 import type { OperationalStatus } from "@/lib/queries/types";
 import { hasRole, requireSession, type Session } from "@/lib/session";
 import { createClient, type ServerClient } from "@/lib/supabase/server";
+import { describeWakes } from "@/lib/wakes";
 import type { CapabilityProfile } from "@shared/core/capabilities.ts";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -93,19 +95,33 @@ async function Settings({ searchParams }: { searchParams: Promise<SearchParams> 
 
 function ProfileTab({ session }: { session: Session }) {
   return (
-    <Card>
-      <CardHeader title="Your account" description="Shown to other members of your workspaces." />
-      <CardBody>
-        <ProfileForm displayName={session.displayName ?? ""} email={session.email} />
-        <p className="text-ink-muted mt-6 text-[13px]">
-          To change your password, sign out and use{" "}
-          <Link href="/forgot-password" className="text-brand hover:text-brand-strong font-medium">
-            Forgot your password
-          </Link>
-          .
-        </p>
-      </CardBody>
-    </Card>
+    <div className="flex flex-col gap-6">
+      <Card>
+        <CardHeader title="Your account" description="Shown to other members of your workspaces." />
+        <CardBody>
+          <ProfileForm displayName={session.displayName ?? ""} email={session.email} />
+        </CardBody>
+      </Card>
+      <Card>
+        <CardHeader
+          title="Password"
+          description="Enter your current password, then choose a new one."
+        />
+        <CardBody>
+          <ChangePasswordForm />
+          <p className="text-ink-muted mt-6 text-[13px]">
+            Forgotten it? Sign out and use{" "}
+            <Link
+              href="/forgot-password"
+              className="text-brand hover:text-brand-strong font-medium"
+            >
+              Forgot your password
+            </Link>{" "}
+            to get a reset link by email.
+          </p>
+        </CardBody>
+      </Card>
+    </div>
   );
 }
 
@@ -855,6 +871,7 @@ async function StatusTab({ session, supabase }: { session: Session; supabase: Se
   const planner = beat("plan", 300);
   const dispatcher = beat("dispatch", 120);
   const maintenance = beat("maintenance", 60 * 60 * 30);
+  const consumers = describeWakes(status.consumers_activated, status.wakes);
   const errors = Object.entries(ws.provider_errors_24h);
   const jobCounts = ["pending", "queued", "running", "waiting", "paused", "blocked", "dead"].map(
     (key) => ({ key, count: ws.jobs[key] ?? 0 }),
@@ -867,6 +884,11 @@ async function StatusTab({ session, supabase }: { session: Session; supabase: Se
           Schedules are planning and queueing work, but nothing wakes the worker that sends
           requests. Run <code className="font-mono text-xs">npm run queues:activate</code> for this
           Supabase project (see the README, “Queue activation”).
+        </Callout>
+      ) : null}
+      {consumers.problem ? (
+        <Callout tone="bad" role="alert" title="Queued work is not reaching the worker">
+          {consumers.problem}
         </Callout>
       ) : null}
 
@@ -893,11 +915,7 @@ async function StatusTab({ session, supabase }: { session: Session; supabase: Se
                 ok={status.scheduler.maintenance ? maintenance.ok : null}
                 detail={status.scheduler.maintenance ? maintenance.detail : "Has not run yet"}
               />
-              <HealthRow
-                label="Queue consumers"
-                ok={status.consumers_activated}
-                detail={status.consumers_activated ? "Activated" : "Not activated"}
-              />
+              <HealthRow label="Queue consumers" ok={consumers.ok} detail={consumers.detail} />
               <HealthRow
                 label="Queue backlog"
                 ok={(status.queue.oldest_message_age_seconds ?? 0) < 900}
