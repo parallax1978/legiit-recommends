@@ -160,7 +160,7 @@ export function AddPromptButton({
             onChange={setBody}
             autoFocus
           />
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
               label="Label"
               htmlFor="new-prompt-label"
@@ -281,7 +281,7 @@ export function PromptRowActions({
               value={body}
               onChange={setBody}
             />
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Label" htmlFor={`edit-label-${prompt.id}`} optional>
                 <Input
                   id={`edit-label-${prompt.id}`}
@@ -733,7 +733,7 @@ export function GenerateButton({
           </Callout>
         ) : (
           <div className="flex flex-col gap-4">
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
               <Field label="Connection and model" htmlFor="generate-model">
                 <Select
                   id="generate-model"
@@ -765,7 +765,7 @@ export function GenerateButton({
                 />
               </Field>
             </div>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <Field label="Category or topic" htmlFor="generate-category" optional>
                 <Input
                   id="generate-category"

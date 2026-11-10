@@ -14,7 +14,7 @@ export function TableWrap({
   return (
     <div
       className={cn(
-        "border-line bg-surface shadow-card overflow-x-auto rounded-2xl border",
+        "border-line bg-surface shadow-card relative overflow-x-auto rounded-2xl border",
         className,
       )}
       role="region"

@@ -35,7 +35,7 @@ export function ManualCheckButton({ campaignId }: { campaignId: string }) {
           className="flex flex-col gap-4"
         >
           <input type="hidden" name="campaign_id" value={campaignId} />
-          <div className="grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
             <TextField name="observed_on" label="Date observed" type="date" required />
             <TextField
               name="source_label"

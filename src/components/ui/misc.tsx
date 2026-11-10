@@ -171,7 +171,7 @@ export function PageSkeleton() {
   return (
     <div aria-busy="true" aria-label="Loading">
       <div className="bg-surface-sunken mb-6 h-7 w-56 animate-pulse rounded-lg" />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
           <div key={i} className="bg-surface-sunken h-24 animate-pulse rounded-2xl" />
         ))}

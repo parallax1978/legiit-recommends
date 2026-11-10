@@ -446,7 +446,7 @@ async function QuestionSets({
           action={admin ? newButton : null}
         />
       ) : (
-        <ul className="grid gap-4 lg:grid-cols-2">
+        <ul className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {visible.map((set) => {
             const own = (questions ?? []).filter(
               (question) => question.probe_set_version_id === set.current_version_id,

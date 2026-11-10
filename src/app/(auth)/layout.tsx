@@ -21,7 +21,7 @@ const POINTS = [
 
 export default function AuthLayout({ children }: LayoutProps<"/">) {
   return (
-    <div className="grid min-h-dvh lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+    <div className="grid min-h-dvh grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
       <aside className="hero-dark relative flex flex-col justify-between gap-8 px-6 py-8 sm:px-10 lg:px-12 lg:py-12">
         <Logo inverted size={32} />
         <div className="max-w-md">

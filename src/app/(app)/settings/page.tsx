@@ -233,7 +233,7 @@ async function MembersTab({ session, supabase }: { session: Session; supabase: S
           />
           <CardBody>
             <InviteForm workspaceId={workspaceId} />
-            <ul className="text-ink-muted mt-4 grid gap-1 text-xs sm:grid-cols-3">
+            <ul className="text-ink-muted mt-4 grid grid-cols-1 gap-1 text-xs sm:grid-cols-3">
               <li>
                 <span className="text-ink font-semibold">Members</span> inspect campaigns,
                 transcripts and results, and export data.
@@ -870,7 +870,7 @@ async function StatusTab({ session, supabase }: { session: Session; supabase: Se
         </Callout>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader
             title="Background system"

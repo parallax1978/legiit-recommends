@@ -107,7 +107,7 @@ export function ChartFrame({
         </div>
       ) : (
         <div
-          className="border-line max-h-80 overflow-auto rounded-xl border"
+          className="border-line relative max-h-80 overflow-auto rounded-xl border"
           tabIndex={0}
           role="region"
           aria-label={`${title}: data table`}

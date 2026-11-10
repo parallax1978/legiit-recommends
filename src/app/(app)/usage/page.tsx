@@ -220,7 +220,7 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
         </Button>
       </form>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
           label={`Estimated spend, ${formatDate(from)} – ${formatDate(to)}`}
           value={formatUsd(totals.cost)}
@@ -295,7 +295,7 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
         />
       </ChartFrame>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader
             title="Connection limits"
@@ -426,7 +426,7 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
         </Card>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div>
           <h2 className="text-ink mb-3 text-[15px] font-semibold">Cost by model</h2>
           {byModel.size === 0 ? (
@@ -517,7 +517,7 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
           connection limits. When the response arrives the reservation is replaced by the actual
           estimated cost.
         </p>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Stat
             label="Held for requests in flight"
             value={formatUsd(heldTotal)}

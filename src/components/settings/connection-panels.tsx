@@ -84,7 +84,7 @@ function LimitFields({ limits }: { limits?: Limits }) {
         maxLength={80}
         hint="A label for your team, for example the OpenAI project it belongs to."
       />
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <TextField
           name="daily_budget_usd"
           label="Daily spending limit (USD)"
@@ -107,7 +107,7 @@ function LimitFields({ limits }: { limits?: Limits }) {
           defaultValue={limits?.totalBudget ?? ""}
         />
       </div>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <TextField
           name="max_concurrent_requests"
           label="Concurrent requests"
@@ -306,7 +306,7 @@ export function VerifyModelForm({
   return (
     <ActionForm
       action={verifyModel}
-      className="grid items-start gap-3 sm:grid-cols-[minmax(0,1fr)_13rem_auto]"
+      className="grid grid-cols-1 items-start gap-3 sm:grid-cols-[minmax(0,1fr)_13rem_auto]"
     >
       <input type="hidden" name="connection_id" value={connectionId} />
       <SelectField
@@ -467,7 +467,7 @@ export function AddPriceButton({
               <option key={id} value={id} />
             ))}
           </datalist>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <TextField
               name="input_usd_per_mtok"
               label="Input"
@@ -496,7 +496,7 @@ export function AddPriceButton({
               required
             />
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <TextField
               name="cache_write_30m_usd_per_mtok"
               label="Cache write, 30 minutes"
@@ -516,7 +516,7 @@ export function AddPriceButton({
               step="any"
             />
           </div>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <TextField
               name="long_context_threshold_tokens"
               label="Long-context threshold (tokens)"
@@ -544,7 +544,7 @@ export function AddPriceButton({
               step="any"
             />
           </div>
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
             <TextField
               name="source_url"
               label="Source URL"

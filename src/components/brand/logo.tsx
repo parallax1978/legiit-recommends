@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { cn } from "@/lib/cn";
 
 /**
@@ -13,6 +14,8 @@ export function LogoMark({
   className?: string;
   title?: string;
 }) {
+  // Unique per instance: a second mark must not point at a gradient inside a hidden copy.
+  const gradientId = `lr-mark-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
   return (
     <svg
       width={size}
@@ -25,7 +28,7 @@ export function LogoMark({
     >
       <defs>
         <linearGradient
-          id="lr-mark-gradient"
+          id={gradientId}
           x1="0"
           y1="0"
           x2="40"
@@ -36,7 +39,7 @@ export function LogoMark({
           <stop offset="100%" stopColor="#1863DC" />
         </linearGradient>
       </defs>
-      <rect width="40" height="40" rx="11" fill="url(#lr-mark-gradient)" />
+      <rect width="40" height="40" rx="11" fill={`url(#${gradientId})`} />
       <path
         d="M12.5 10.5h15a4 4 0 0 1 4 4v8.5a4 4 0 0 1-4 4h-6.2l-5.1 4.2a.9.9 0 0 1-1.5-.7V27h-2.2a4 4 0 0 1-4-4v-8.5a4 4 0 0 1 4-4Z"
         fill="#fff"

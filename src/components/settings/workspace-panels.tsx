@@ -192,7 +192,7 @@ export function InviteForm({ workspaceId }: { workspaceId: string }) {
     <ActionForm
       action={inviteMember}
       resetOnSuccess
-      className="grid items-start gap-3 sm:grid-cols-[minmax(0,1fr)_12rem_auto]"
+      className="grid grid-cols-1 items-start gap-3 sm:grid-cols-[minmax(0,1fr)_12rem_auto]"
     >
       <input type="hidden" name="workspace_id" value={workspaceId} />
       <TextField name="email" label="Email address" type="email" autoComplete="off" required />

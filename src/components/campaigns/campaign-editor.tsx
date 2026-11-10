@@ -128,7 +128,7 @@ function ModelSettings({
   const prefix = idPrefix === "check" ? "check_" : "";
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <Field
         label="Maximum output tokens per response"
         htmlFor={`${idPrefix}-max-output`}
@@ -385,7 +385,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
   const launched = data.campaign.launched;
 
   return (
-    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+    <div className="grid grid-cols-1 items-start gap-6 pb-20 xl:grid-cols-[minmax(0,1fr)_20rem] xl:pb-0">
       <div className="flex min-w-0 flex-col gap-6">
         {launched ? (
           <Callout tone="info" title="This campaign has been launched">
@@ -425,7 +425,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
           title="Business"
           description="The business whose inclusion the campaign requests and looks for. These values fill the variables in your prompts."
         >
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Business name" htmlFor="c-business" error={error("business_name")}>
               <Input
                 id="c-business"
@@ -451,7 +451,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
               />
             </Field>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
               label="Other accepted names"
               htmlFor="c-aliases"
@@ -479,7 +479,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
               />
             </Field>
           </div>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field label="Category or topic" htmlFor="c-category" error={error("category")}>
               <Input
                 id="c-category"
@@ -586,7 +586,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
             </Button>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
               label="If the business already appears in the first answer"
               htmlFor="c-existing"
@@ -721,7 +721,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
               .
             </Callout>
           ) : null}
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="OpenAI connection" htmlFor="c-connection" error={error("connection_id")}>
               <Select
                 id="c-connection"
@@ -828,7 +828,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
           title="Schedule"
           description="Times are entered in the campaign's timezone and stored in UTC. Daily quotas and active hours follow the campaign's timezone."
         >
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
               label="Timezone"
               htmlFor="c-timezone"
@@ -883,7 +883,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
               />
             </Field>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Ends" htmlFor="c-end-mode">
               <Select
                 id="c-end-mode"
@@ -963,7 +963,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
             <ProblemList problems={problemsFor("active_weekdays")} />
           </fieldset>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field
               label="Active from"
               htmlFor="c-active-start"
@@ -1026,7 +1026,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
             </Field>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field
               label="Conversations at once"
               htmlFor="c-concurrency"
@@ -1096,7 +1096,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
             </Field>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field
               label="If a slot is missed"
               htmlFor="c-missed"
@@ -1185,7 +1185,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
               ))}
             </Select>
           </Field>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field
               label="Baseline checks"
               htmlFor="c-baseline"
@@ -1292,7 +1292,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
           title="Budgets"
           description="Hard caps in US dollars covering conversations, fresh checks and retries. Before each request its worst-case cost is reserved; a request that does not fit is not sent."
         >
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
               label="Daily budget (USD)"
               htmlFor="c-daily-budget"
@@ -1330,7 +1330,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
       </div>
 
       <aside className="flex flex-col gap-4 xl:sticky xl:top-20" aria-label="Save and estimate">
-        <div className="border-line bg-surface shadow-card rounded-2xl border p-5">
+        <div className="border-line bg-surface shadow-card hidden rounded-2xl border p-5 xl:block">
           <div className="flex flex-col gap-2">
             <Button
               onClick={() => save()}
@@ -1406,6 +1406,28 @@ export function CampaignEditor({ data }: { data: EditorData }) {
           </ul>
         </nav>
       </aside>
+
+      {/* On smaller screens the save panel sits below a long form, so saving stays in reach. */}
+      <div className="border-line bg-surface/95 fixed inset-x-0 bottom-0 z-20 flex items-center gap-2 border-t px-4 py-3 backdrop-blur lg:left-64 xl:hidden">
+        <Button
+          className="flex-1"
+          onClick={() => save()}
+          disabled={pending}
+          aria-busy={pending}
+          variant={dirty ? "primary" : "secondary"}
+        >
+          {pending ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+          {dirty ? "Save draft" : "Saved"}
+        </Button>
+        <Button
+          className="flex-1"
+          onClick={() => save("review")}
+          disabled={pending}
+          variant={dirty ? "secondary" : "primary"}
+        >
+          Save and review
+        </Button>
+      </div>
     </div>
   );
 }

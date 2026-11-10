@@ -162,7 +162,7 @@ async function Overview() {
             description="Nothing runs until a campaign is launched. These steps prepare one."
           />
           <CardBody>
-            <ol className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <ol className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
               {steps.map((step, index) => {
                 const allowed = step.role === "owner" ? isOwner : isAdmin;
                 return (
@@ -202,7 +202,7 @@ async function Overview() {
         </Card>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
           label="Active campaigns"
           value={formatNumber(summary.campaigns.active)}
@@ -229,7 +229,7 @@ async function Overview() {
         />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         <ChartFrame
           className="xl:col-span-2"
           title="Estimated spend per day"
@@ -289,7 +289,7 @@ async function Overview() {
         </Card>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="xl:col-span-2">
           <h2 className="text-ink mb-3 text-[15px] font-semibold">Campaigns in flight</h2>
           {live.length === 0 ? (
