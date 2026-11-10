@@ -32,7 +32,9 @@ export interface PreviousUsage {
 export function estimateTurnInputTokens(prompt: string, previous: PreviousUsage | null): number {
   const own = estimateTextTokens(prompt) + MESSAGE_OVERHEAD_TOKENS;
   if (!previous) return REQUEST_OVERHEAD_TOKENS + own;
-  return (previous.input_tokens ?? 0) + (previous.output_tokens ?? 0) + own + REQUEST_OVERHEAD_TOKENS;
+  return (
+    (previous.input_tokens ?? 0) + (previous.output_tokens ?? 0) + own + REQUEST_OVERHEAD_TOKENS
+  );
 }
 
 export function estimateSingleInputTokens(prompt: string): number {
@@ -74,8 +76,14 @@ function tenThousandths(multiplier: number | null | undefined): bigint {
 }
 
 function longContextMultipliers(price: PriceRow, inputTokens: number): [bigint, bigint] {
-  if (price.long_context_threshold_tokens != null && inputTokens > price.long_context_threshold_tokens) {
-    return [tenThousandths(price.long_context_input_multiplier), tenThousandths(price.long_context_output_multiplier)];
+  if (
+    price.long_context_threshold_tokens != null &&
+    inputTokens > price.long_context_threshold_tokens
+  ) {
+    return [
+      tenThousandths(price.long_context_input_multiplier),
+      tenThousandths(price.long_context_output_multiplier),
+    ];
   }
   return [10_000n, 10_000n];
 }
@@ -90,11 +98,16 @@ function tokens(count: number | null | undefined): bigint {
  * Rounded up to 1e-8 USD, like the database.
  */
 export function maxCostUsd(price: PriceRow, inputTokens: number, maxOutputTokens: number): number {
-  const rates = [micro(price.input_usd_per_mtok), micro(price.cache_write_30m_usd_per_mtok), micro(price.cache_write_12h_usd_per_mtok)];
+  const rates = [
+    micro(price.input_usd_per_mtok),
+    micro(price.cache_write_30m_usd_per_mtok),
+    micro(price.cache_write_12h_usd_per_mtok),
+  ];
   const inputRate = rates.reduce((highest, rate) => (rate > highest ? rate : highest), 0n);
   const [inMult, outMult] = longContextMultipliers(price, inputTokens);
   const numerator =
-    tokens(inputTokens) * inputRate * inMult + tokens(maxOutputTokens) * micro(price.output_usd_per_mtok) * outMult;
+    tokens(inputTokens) * inputRate * inMult +
+    tokens(maxOutputTokens) * micro(price.output_usd_per_mtok) * outMult;
   return Number((numerator + UNIT - 1n) / UNIT) / 1e8;
 }
 

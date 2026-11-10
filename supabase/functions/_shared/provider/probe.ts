@@ -39,7 +39,12 @@ export interface ProbeStep {
  */
 export function planProbe(verifyOutputCap: number): ProbeStep[] {
   const base = estimateSingleInputTokens(PROBE_PROMPT);
-  const step = (key: string, params: Record<string, unknown>, cap = SMALL_CAP, extraInput = 0): ProbeStep => ({
+  const step = (
+    key: string,
+    params: Record<string, unknown>,
+    cap = SMALL_CAP,
+    extraInput = 0,
+  ): ProbeStep => ({
     key,
     est_input_tokens: base + extraInput,
     max_output_tokens: cap,
@@ -61,7 +66,11 @@ export function planProbe(verifyOutputCap: number): ProbeStep[] {
 
 export interface ProbeHooks {
   /** Called with the outcome of each step that was actually sent. */
-  onOutcome(key: string, outcome: ProviderOutcome, sentParams: Record<string, unknown>): Promise<void>;
+  onOutcome(
+    key: string,
+    outcome: ProviderOutcome,
+    sentParams: Record<string, unknown>,
+  ): Promise<void>;
   /** Called for planned steps that were not needed, so their reservation can be released. */
   onUnused(key: string): Promise<void>;
 }
@@ -84,7 +93,9 @@ function rejectedAsUnsupported(outcome: ProviderOutcome): boolean {
 
 function parseOutputLimit(message: string): number | null {
   const match =
-    /(?:<=|at most|less than or equal to|maximum(?: value)?(?: is| of)?|max(?:imum)? (?:output )?tokens?(?: is| of)?)\s*:?\s*(\d[\d,]{2,})/i.exec(message);
+    /(?:<=|at most|less than or equal to|maximum(?: value)?(?: is| of)?|max(?:imum)? (?:output )?tokens?(?: is| of)?)\s*:?\s*(\d[\d,]{2,})/i.exec(
+      message,
+    );
   if (!match) return null;
   const value = Number(match[1]!.replace(/,/g, ""));
   return Number.isFinite(value) && value >= 16 ? value : null;
@@ -139,12 +150,20 @@ export async function probeModel(
   const base = await send("base", {});
   if (base.kind !== "result") {
     const message =
-      base.kind === "failure" ? base.failure.message : "The provider did not return a finished response.";
+      base.kind === "failure"
+        ? base.failure.message
+        : "The provider did not return a finished response.";
     return finish({ verified: false, capabilities: null, error: message });
   }
 
   // 2. A second turn can continue from the stored first response.
-  const chain = await send("chain", {}, { previous_response_id: base.result.response_id }, SMALL_CAP, FOLLOW_UP_PROMPT);
+  const chain = await send(
+    "chain",
+    {},
+    { previous_response_id: base.result.response_id },
+    SMALL_CAP,
+    FOLLOW_UP_PROMPT,
+  );
   const chaining = accepted(chain);
   if (!chaining && chain.kind === "failure") {
     notes.push(`Chaining with previous_response_id was rejected: ${chain.failure.message}`);
@@ -152,7 +171,9 @@ export async function probeModel(
 
   // 3. Which reasoning efforts, sampling parameters and verbosity the model accepts.
   const [effortOutcomes, temperature, topP, verbosity] = await Promise.all([
-    Promise.all(REASONING_EFFORTS.map((effort) => send(`effort:${effort}`, { reasoning_effort: effort }))),
+    Promise.all(
+      REASONING_EFFORTS.map((effort) => send(`effort:${effort}`, { reasoning_effort: effort })),
+    ),
     send("temperature", { temperature: 0.7 }),
     send("top_p", { top_p: 0.9 }),
     send("verbosity", { verbosity: "low" }),
@@ -181,7 +202,9 @@ export async function probeModel(
     const withNone = await send(`${key}:none`, { ...params, reasoning_effort: "none" });
     return accepted(withNone) ? "effort_none" : "never";
   };
-  const temperatureSupport = await samplingSupport("temperature", temperature, { temperature: 0.7 });
+  const temperatureSupport = await samplingSupport("temperature", temperature, {
+    temperature: 0.7,
+  });
   const topPSupport = await samplingSupport("top_p", topP, { top_p: 0.9 });
 
   // 4. The output cap the owner intends to use is accepted.
@@ -193,7 +216,9 @@ export async function probeModel(
       verifiedCap = verifyOutputCap;
     } else if (capOutcome.kind === "failure") {
       limit = parseOutputLimit(capOutcome.failure.message);
-      notes.push(`An output cap of ${verifyOutputCap} tokens was rejected: ${capOutcome.failure.message}`);
+      notes.push(
+        `An output cap of ${verifyOutputCap} tokens was rejected: ${capOutcome.failure.message}`,
+      );
     }
   }
 

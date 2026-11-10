@@ -6,7 +6,11 @@
 // fresh checks, so naming the target here cannot influence what is being measured.
 
 import type { DetectionTarget, Inclusion, ListKind } from "../core/detection.ts";
-import { estimateTextTokens, MESSAGE_OVERHEAD_TOKENS, REQUEST_OVERHEAD_TOKENS } from "../core/estimate.ts";
+import {
+  estimateTextTokens,
+  MESSAGE_OVERHEAD_TOKENS,
+  REQUEST_OVERHEAD_TOKENS,
+} from "../core/estimate.ts";
 import type { ModelParams } from "../core/capabilities.ts";
 import type { ResponsesRequest } from "./types.ts";
 
@@ -72,12 +76,17 @@ export interface ModelClassification {
 }
 
 function positiveInt(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 1000 ? value : null;
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 1000
+    ? value
+    : null;
 }
 
 /** Parses the classifier's JSON. Returns null when it cannot be read as a valid label. */
 export function parseClassification(outputText: string): ModelClassification | null {
-  const text = (outputText ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
+  const text = (outputText ?? "")
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```\s*$/, "");
   const first = text.indexOf("{");
   const last = text.lastIndexOf("}");
   if (first < 0 || last <= first) return null;
@@ -88,9 +97,11 @@ export function parseClassification(outputText: string): ModelClassification | n
     return null;
   }
   const inclusion = parsed.inclusion;
-  if (inclusion !== "included" && inclusion !== "mentioned_only" && inclusion !== "not_mentioned") return null;
+  if (inclusion !== "included" && inclusion !== "mentioned_only" && inclusion !== "not_mentioned")
+    return null;
   const rank = inclusion === "included" ? positiveInt(parsed.rank) : null;
-  const position = inclusion === "included" && rank === null ? positiveInt(parsed.list_position) : null;
+  const position =
+    inclusion === "included" && rank === null ? positiveInt(parsed.list_position) : null;
   return {
     detector_version: MODEL_CLASSIFIER_VERSION,
     mentioned: inclusion !== "not_mentioned",
@@ -98,6 +109,7 @@ export function parseClassification(outputText: string): ModelClassification | n
     rank,
     list_position: position,
     list_kind: rank !== null ? "numbered" : position !== null ? "bulleted" : "none",
-    reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : "Classified by model.",
+    reason:
+      typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : "Classified by model.",
   };
 }

@@ -8,7 +8,11 @@
 // the business at all, and any candidate that names it anyway is discarded.
 
 import { mentionsTarget, type DetectionTarget } from "../core/detection.ts";
-import { estimateTextTokens, MESSAGE_OVERHEAD_TOKENS, REQUEST_OVERHEAD_TOKENS } from "../core/estimate.ts";
+import {
+  estimateTextTokens,
+  MESSAGE_OVERHEAD_TOKENS,
+  REQUEST_OVERHEAD_TOKENS,
+} from "../core/estimate.ts";
 import {
   allowedVariables,
   templateProblem,
@@ -136,7 +140,10 @@ export function parseGeneration(
       // If the model wrote the real name despite the instruction, turn it back into a placeholder.
       const name = (target.business_name ?? "").trim();
       if (name.length >= 2) {
-        text = text.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(name)}(?![\\p{L}\\p{N}])`, "giu"), "{{business_name}}");
+        text = text.replace(
+          new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(name)}(?![\\p{L}\\p{N}])`, "giu"),
+          "{{business_name}}",
+        );
       }
     }
 
@@ -159,21 +166,28 @@ export function parseGeneration(
 }
 
 function extractStrings(outputText: string): string[] {
-  const text = (outputText ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
+  const text = (outputText ?? "")
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```\s*$/, "");
   const attempts = [text];
   const firstBrace = text.indexOf("{");
   const lastBrace = text.lastIndexOf("}");
-  if (firstBrace >= 0 && lastBrace > firstBrace) attempts.push(text.slice(firstBrace, lastBrace + 1));
+  if (firstBrace >= 0 && lastBrace > firstBrace)
+    attempts.push(text.slice(firstBrace, lastBrace + 1));
   const firstBracket = text.indexOf("[");
   const lastBracket = text.lastIndexOf("]");
-  if (firstBracket >= 0 && lastBracket > firstBracket) attempts.push(text.slice(firstBracket, lastBracket + 1));
+  if (firstBracket >= 0 && lastBracket > firstBracket)
+    attempts.push(text.slice(firstBracket, lastBracket + 1));
 
   for (const attempt of attempts) {
     try {
       const parsed: unknown = JSON.parse(attempt);
       const list = Array.isArray(parsed)
         ? parsed
-        : parsed && typeof parsed === "object" && Array.isArray((parsed as { variations?: unknown }).variations)
+        : parsed &&
+            typeof parsed === "object" &&
+            Array.isArray((parsed as { variations?: unknown }).variations)
           ? (parsed as { variations: unknown[] }).variations
           : null;
       if (list) return list.filter((item): item is string => typeof item === "string");
@@ -184,6 +198,13 @@ function extractStrings(outputText: string): string[] {
   // Last resort: one variation per non-empty line, without list markers.
   return text
     .split("\n")
-    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "").replace(/^"|",?$/g, "").trim())
-    .filter((line) => line.length > 0 && !/^[{}\[\]]/.test(line) && !/^"?variations"?\s*:/.test(line));
+    .map((line) =>
+      line
+        .replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "")
+        .replace(/^"|",?$/g, "")
+        .trim(),
+    )
+    .filter(
+      (line) => line.length > 0 && !/^[{}\[\]]/.test(line) && !/^"?variations"?\s*:/.test(line),
+    );
 }

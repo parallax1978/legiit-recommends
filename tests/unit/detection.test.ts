@@ -14,7 +14,8 @@ const target: DetectionTarget = {
   domain_aliases: ["nwr-coffee.example"],
 };
 
-const kinds = (text: string, t: DetectionTarget = target) => findMentions(text, t).map((m) => m.kind);
+const kinds = (text: string, t: DetectionTarget = target) =>
+  findMentions(text, t).map((m) => m.kind);
 
 describe("mention detection", () => {
   it("matches the plain name regardless of case", () => {
@@ -157,7 +158,8 @@ describe("inclusion classification", () => {
   });
 
   it("reports list position but no rank for a bullet list", () => {
-    const text = "Options:\n\n- Alpha Beans\n- Northwind Roasters (northwindroasters.example)\n- Gamma Roast";
+    const text =
+      "Options:\n\n- Alpha Beans\n- Northwind Roasters (northwindroasters.example)\n- Gamma Roast";
     const result = classifyResponse(text, target);
     expect(result).toMatchObject({
       inclusion: "included",
@@ -183,22 +185,36 @@ describe("inclusion classification", () => {
       "### 3. Gamma Roast",
       "Budget friendly.",
     ].join("\n");
-    expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", rank: 2, list_length: 3 });
+    expect(classifyResponse(text, target)).toMatchObject({
+      inclusion: "included",
+      rank: 2,
+      list_length: 3,
+    });
   });
 
   it("handles a bold number wrapping the name", () => {
-    const text = "**1. Alpha Beans** - big\n**2. Northwind Roasters** - small\n**3. Gamma** - cheap";
+    const text =
+      "**1. Alpha Beans** - big\n**2. Northwind Roasters** - small\n**3. Gamma** - cheap";
     expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", rank: 2 });
   });
 
   it("handles a Markdown link as the item head", () => {
-    const text = "* [Alpha Beans](https://alpha.example) - big\n* [Northwind Roasters](https://northwindroasters.example) - small";
-    expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", list_position: 2, rank: null });
+    const text =
+      "* [Alpha Beans](https://alpha.example) - big\n* [Northwind Roasters](https://northwindroasters.example) - small";
+    expect(classifyResponse(text, target)).toMatchObject({
+      inclusion: "included",
+      list_position: 2,
+      rank: null,
+    });
   });
 
   it("accepts a label before the name", () => {
-    const text = "- **Best overall:** Alpha Beans\n- **Best for subscriptions:** Northwind Roasters\n- **Budget pick:** Gamma";
-    expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", list_position: 2 });
+    const text =
+      "- **Best overall:** Alpha Beans\n- **Best for subscriptions:** Northwind Roasters\n- **Budget pick:** Gamma";
+    expect(classifyResponse(text, target)).toMatchObject({
+      inclusion: "included",
+      list_position: 2,
+    });
   });
 
   it("accepts short lead-in words before the name", () => {
@@ -207,13 +223,20 @@ describe("inclusion classification", () => {
   });
 
   it("is ambiguous when the target only appears inside another item's description", () => {
-    const text = "1. **Alpha Beans** – cheaper than Northwind Roasters\n2. **Beta Brew** – fast\n3. **Gamma** – ok";
+    const text =
+      "1. **Alpha Beans** – cheaper than Northwind Roasters\n2. **Beta Brew** – fast\n3. **Gamma** – ok";
     const result = classifyResponse(text, target);
-    expect(result).toMatchObject({ mentioned: true, inclusion: "ambiguous", rank: null, list_position: null });
+    expect(result).toMatchObject({
+      mentioned: true,
+      inclusion: "ambiguous",
+      rank: null,
+      list_position: null,
+    });
   });
 
   it("is ambiguous when a list item talks about the target without naming it as the item", () => {
-    const text = "- Alpha Beans\n- Beta Brew\n- I don't have reliable information about Northwind Roasters";
+    const text =
+      "- Alpha Beans\n- Beta Brew\n- I don't have reliable information about Northwind Roasters";
     expect(classifyResponse(text, target)).toMatchObject({ inclusion: "ambiguous" });
   });
 
@@ -234,13 +257,19 @@ describe("inclusion classification", () => {
   });
 
   it("reports mentioned_only for a closing remark after the list", () => {
-    const text = "1. Alpha Beans\n2. Beta Brew\n\nLet me know if you want me to look into Northwind Roasters.";
+    const text =
+      "1. Alpha Beans\n2. Beta Brew\n\nLet me know if you want me to look into Northwind Roasters.";
     expect(classifyResponse(text, target)).toMatchObject({ inclusion: "mentioned_only" });
   });
 
   it("is ambiguous for prose answers without any list", () => {
-    const text = "For subscriptions I would look at Northwind Roasters; they roast in small batches.";
-    expect(classifyResponse(text, target)).toMatchObject({ mentioned: true, inclusion: "ambiguous", list_kind: "none" });
+    const text =
+      "For subscriptions I would look at Northwind Roasters; they roast in small batches.";
+    expect(classifyResponse(text, target)).toMatchObject({
+      mentioned: true,
+      inclusion: "ambiguous",
+      list_kind: "none",
+    });
   });
 
   it("prefers inclusion when the target is both discussed and listed", () => {
@@ -251,7 +280,11 @@ describe("inclusion classification", () => {
       "2. Beta Brew",
       "3. Northwind Roasters",
     ].join("\n");
-    expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", rank: 3, list_length: 3 });
+    expect(classifyResponse(text, target)).toMatchObject({
+      inclusion: "included",
+      rank: 3,
+      list_length: 3,
+    });
   });
 
   it("treats unindented bullets between numbered items as part of the numbered item", () => {
@@ -290,17 +323,30 @@ describe("inclusion classification", () => {
       "| Northwind Roasters | Small batch |",
       "| Gamma | Cheap |",
     ].join("\n");
-    expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", rank: null, list_position: 2 });
+    expect(classifyResponse(text, target)).toMatchObject({
+      inclusion: "included",
+      rank: null,
+      list_position: 2,
+    });
   });
 
   it("does not continue a numbered list across a restart", () => {
     const text = "1. Alpha\n2. Beta\n\nRunners-up:\n\n1. Northwind Roasters\n2. Gamma";
-    expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", rank: 1, list_length: 2 });
+    expect(classifyResponse(text, target)).toMatchObject({
+      inclusion: "included",
+      rank: 1,
+      list_length: 2,
+    });
   });
 
   it("uses plain headings as an unranked list when the target is a heading", () => {
-    const text = "### Alpha Beans\nBig.\n\n### Northwind Roasters\nSmall batch.\n\n### Gamma\nCheap.";
-    expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", rank: null, list_position: 2 });
+    const text =
+      "### Alpha Beans\nBig.\n\n### Northwind Roasters\nSmall batch.\n\n### Gamma\nCheap.";
+    expect(classifyResponse(text, target)).toMatchObject({
+      inclusion: "included",
+      rank: null,
+      list_position: 2,
+    });
   });
 
   it("never reports a rank for a single-item 'list'", () => {
@@ -310,7 +356,10 @@ describe("inclusion classification", () => {
 
   it("matches by domain alone inside a list item", () => {
     const text = "- alpha.example\n- northwindroasters.example\n- gamma.example";
-    expect(classifyResponse(text, target)).toMatchObject({ inclusion: "included", list_position: 2 });
+    expect(classifyResponse(text, target)).toMatchObject({
+      inclusion: "included",
+      list_position: 2,
+    });
   });
 
   it("ignores list-like lines inside code fences", () => {

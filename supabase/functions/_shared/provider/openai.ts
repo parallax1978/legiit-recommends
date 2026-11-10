@@ -13,7 +13,10 @@ import OpenAI, {
   APIError,
   APIUserAbortError,
 } from "openai";
-import type { Response as OpenAIResponse, ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
+import type {
+  Response as OpenAIResponse,
+  ResponseCreateParamsNonStreaming,
+} from "openai/resources/responses/responses";
 import type {
   CallOptions,
   ErrorClass,
@@ -44,7 +47,8 @@ const QUOTA_CODES = new Set([
   "billing_not_active",
 ]);
 
-const NOT_SENT = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|connection refused|dns error|failed to lookup|name or service not known|certificate|getaddrinfo/i;
+const NOT_SENT =
+  /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|connection refused|dns error|failed to lookup|name or service not known|certificate|getaddrinfo/i;
 
 function toInt(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
@@ -67,7 +71,10 @@ export function normalizeUsage(usage: OpenAIResponse["usage"] | null | undefined
 }
 
 /** Assistant text of a response. Interim commentary is left out when a final answer exists. */
-export function extractOutput(response: Pick<OpenAIResponse, "output">): { text: string; refusal: boolean } {
+export function extractOutput(response: Pick<OpenAIResponse, "output">): {
+  text: string;
+  refusal: boolean;
+} {
   const finals: string[] = [];
   const commentary: string[] = [];
   const refusals: string[] = [];
@@ -94,13 +101,23 @@ function parseDurationMs(value: string | null): number | null {
   for (const match of value.matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h)/g)) {
     matched = true;
     const amount = Number(match[1]);
-    total += match[2] === "ms" ? amount : match[2] === "s" ? amount * 1000 : match[2] === "m" ? amount * 60000 : amount * 3600000;
+    total +=
+      match[2] === "ms"
+        ? amount
+        : match[2] === "s"
+          ? amount * 1000
+          : match[2] === "m"
+            ? amount * 60000
+            : amount * 3600000;
   }
   return matched ? Math.round(total) : null;
 }
 
 /** Provider retry guidance from response headers, in milliseconds. */
-export function retryAfterMs(headers: Headers | undefined | null, now: number = Date.now()): number | null {
+export function retryAfterMs(
+  headers: Headers | undefined | null,
+  now: number = Date.now(),
+): number | null {
   if (!headers) return null;
   const ms = headers.get("retry-after-ms");
   if (ms && Number.isFinite(Number(ms))) return Math.max(0, Math.round(Number(ms)));
@@ -121,7 +138,10 @@ export function retryAfterMs(headers: Headers | undefined | null, now: number = 
   return waits.length > 0 ? Math.max(...waits) : null;
 }
 
-function failure(partial: Partial<ProviderFailure> & { class: ErrorClass; message: string }, startedAt: number): ProviderFailure {
+function failure(
+  partial: Partial<ProviderFailure> & { class: ErrorClass; message: string },
+  startedAt: number,
+): ProviderFailure {
   return {
     uncertain: false,
     http_status: null,
@@ -143,7 +163,8 @@ export function classifyError(error: unknown, startedAt: number): ProviderFailur
       {
         class: "timeout",
         uncertain: true,
-        message: "The request did not finish before its deadline. The provider may still have processed it.",
+        message:
+          "The request did not finish before its deadline. The provider may still have processed it.",
       },
       startedAt,
     );
@@ -185,21 +206,31 @@ export function classifyError(error: unknown, startedAt: number): ProviderFailur
       if (type === "insufficient_quota" || (code !== null && QUOTA_CODES.has(code))) {
         return failure({ ...base, class: "quota_exhausted" }, startedAt);
       }
-      return failure({ ...base, class: "rate_limited", retry_after_ms: retryAfterMs(error.headers) }, startedAt);
+      return failure(
+        { ...base, class: "rate_limited", retry_after_ms: retryAfterMs(error.headers) },
+        startedAt,
+      );
     }
     if (chainGone) return failure({ ...base, class: "chain_expired" }, startedAt);
     if (code === "model_not_found" || (status === 404 && /model/i.test(message))) {
       return failure({ ...base, class: "model_unavailable" }, startedAt);
     }
     if (status === 403) return failure({ ...base, class: "permission_denied" }, startedAt);
-    if (status === 408 || status === 409) return failure({ ...base, class: "server_error" }, startedAt);
+    if (status === 408 || status === 409)
+      return failure({ ...base, class: "server_error" }, startedAt);
     if (status >= 500) {
-      return failure({ ...base, class: "server_error", retry_after_ms: retryAfterMs(error.headers) }, startedAt);
+      return failure(
+        { ...base, class: "server_error", retry_after_ms: retryAfterMs(error.headers) },
+        startedAt,
+      );
     }
     return failure({ ...base, class: "invalid_request" }, startedAt);
   }
   const message = error instanceof Error ? error.message : String(error);
-  return failure({ class: "connection_error", uncertain: true, message: message.slice(0, 1000) }, startedAt);
+  return failure(
+    { class: "connection_error", uncertain: true, message: message.slice(0, 1000) },
+    startedAt,
+  );
 }
 
 function normalizeResponse(
@@ -214,7 +245,12 @@ function normalizeResponse(
   if (status === "queued" || status === "in_progress") {
     return {
       kind: "pending",
-      pending: { status, response_id: response.id, provider_request_id: requestId, latency_ms: latency },
+      pending: {
+        status,
+        response_id: response.id,
+        provider_request_id: requestId,
+        latency_ms: latency,
+      },
     };
   }
 
@@ -229,7 +265,8 @@ function normalizeResponse(
         output_items: (response.output ?? []) as unknown[],
         returned_model: typeof response.model === "string" ? response.model : null,
         service_tier: response.service_tier ?? null,
-        incomplete_reason: status === "incomplete" ? (response.incomplete_details?.reason ?? "unknown") : null,
+        incomplete_reason:
+          status === "incomplete" ? (response.incomplete_details?.reason ?? "unknown") : null,
         refusal: output.refusal,
         provider_request_id: requestId,
         http_status: httpStatus,
@@ -248,7 +285,8 @@ function normalizeResponse(
 
   // "failed" or "cancelled": the provider accepted the request but produced no usable answer.
   const errorCode = response.error?.code ?? null;
-  const message = response.error?.message ?? `The response ended with status "${status ?? "unknown"}".`;
+  const message =
+    response.error?.message ?? `The response ended with status "${status ?? "unknown"}".`;
   const hasUsage = !!response.usage && toInt(response.usage.total_tokens) > 0;
   const cls: ErrorClass =
     status === "cancelled"

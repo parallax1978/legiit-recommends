@@ -11,7 +11,12 @@ import {
   usageCostUsd,
   type PriceRow,
 } from "@shared/core/estimate.ts";
-import { extractVariables, renderTemplate, templateProblem, type TemplateKind } from "@shared/core/templates.ts";
+import {
+  extractVariables,
+  renderTemplate,
+  templateProblem,
+  type TemplateKind,
+} from "@shared/core/templates.ts";
 import { closeConnections, resetDatabase, sql } from "./harness.ts";
 
 beforeAll(async () => {
@@ -35,7 +40,13 @@ const TEXTS = [
   "Closing only }} here",
   "x".repeat(4001),
 ];
-const KINDS: TemplateKind[] = ["initial_question", "inclusion_request", "revision_request", "extra_step", "fresh_check"];
+const KINDS: TemplateKind[] = [
+  "initial_question",
+  "inclusion_request",
+  "revision_request",
+  "extra_step",
+  "fresh_check",
+];
 const VALUES = {
   business_name: "Northwind Roasters",
   website_url: "https://northwindroasters.example",
@@ -48,7 +59,10 @@ describe("template logic", () => {
   it("validates templates identically", async () => {
     for (const text of TEXTS) {
       for (const kind of KINDS) {
-        const [row] = await sql<{ problem: string | null }>("select app_private.template_problem($1, $2::public.template_kind) as problem", [text, kind]);
+        const [row] = await sql<{ problem: string | null }>(
+          "select app_private.template_problem($1, $2::public.template_kind) as problem",
+          [text, kind],
+        );
         expect(templateProblem(text, kind), `${kind}: ${text.slice(0, 40)}`).toBe(row!.problem);
       }
     }
@@ -56,7 +70,10 @@ describe("template logic", () => {
 
   it("extracts variables identically", async () => {
     for (const text of TEXTS) {
-      const [row] = await sql<{ vars: string[] }>("select app_private.template_variables($1) as vars", [text]);
+      const [row] = await sql<{ vars: string[] }>(
+        "select app_private.template_variables($1) as vars",
+        [text],
+      );
       expect(extractVariables(text), text.slice(0, 40)).toEqual(row!.vars);
     }
   });
@@ -64,7 +81,10 @@ describe("template logic", () => {
   it("renders identically, including replacement-pattern characters in values", async () => {
     for (const text of TEXTS) {
       if (templateProblem(text, "inclusion_request")) continue;
-      const [row] = await sql<{ rendered: string }>("select app_private.render_template($1, $2::jsonb) as rendered", [text, JSON.stringify(VALUES)]);
+      const [row] = await sql<{ rendered: string }>(
+        "select app_private.render_template($1, $2::jsonb) as rendered",
+        [text, JSON.stringify(VALUES)],
+      );
       expect(renderTemplate(text, VALUES), text.slice(0, 40)).toBe(row!.rendered);
     }
   });
@@ -73,13 +93,18 @@ describe("template logic", () => {
 describe("token and cost estimates", () => {
   it("estimates tokens identically", async () => {
     for (const text of TEXTS) {
-      const [row] = await sql<{ tokens: number }>("select app_private.estimate_text_tokens($1) as tokens", [text]);
+      const [row] = await sql<{ tokens: number }>(
+        "select app_private.estimate_text_tokens($1) as tokens",
+        [text],
+      );
       expect(estimateTextTokens(text), text.slice(0, 40)).toBe(row!.tokens);
     }
     const [overheads] = await sql<{ message: number; request: number }>(
       "select app_private.message_overhead_tokens() as message, app_private.request_overhead_tokens() as request",
     );
-    expect({ message: MESSAGE_OVERHEAD_TOKENS, request: REQUEST_OVERHEAD_TOKENS }).toEqual(overheads);
+    expect({ message: MESSAGE_OVERHEAD_TOKENS, request: REQUEST_OVERHEAD_TOKENS }).toEqual(
+      overheads,
+    );
   });
 
   it("computes reservation and usage costs identically for every seeded price", async () => {
@@ -100,13 +125,26 @@ describe("token and cost estimates", () => {
     for (const raw of prices) {
       const price: PriceRow = {
         input_usd_per_mtok: Number(raw.input_usd_per_mtok),
-        cached_input_usd_per_mtok: raw.cached_input_usd_per_mtok === null ? null : Number(raw.cached_input_usd_per_mtok),
+        cached_input_usd_per_mtok:
+          raw.cached_input_usd_per_mtok === null ? null : Number(raw.cached_input_usd_per_mtok),
         output_usd_per_mtok: Number(raw.output_usd_per_mtok),
-        cache_write_30m_usd_per_mtok: raw.cache_write_30m_usd_per_mtok === null ? null : Number(raw.cache_write_30m_usd_per_mtok),
-        cache_write_12h_usd_per_mtok: raw.cache_write_12h_usd_per_mtok === null ? null : Number(raw.cache_write_12h_usd_per_mtok),
+        cache_write_30m_usd_per_mtok:
+          raw.cache_write_30m_usd_per_mtok === null
+            ? null
+            : Number(raw.cache_write_30m_usd_per_mtok),
+        cache_write_12h_usd_per_mtok:
+          raw.cache_write_12h_usd_per_mtok === null
+            ? null
+            : Number(raw.cache_write_12h_usd_per_mtok),
         long_context_threshold_tokens: raw.long_context_threshold_tokens,
-        long_context_input_multiplier: raw.long_context_input_multiplier === null ? null : Number(raw.long_context_input_multiplier),
-        long_context_output_multiplier: raw.long_context_output_multiplier === null ? null : Number(raw.long_context_output_multiplier),
+        long_context_input_multiplier:
+          raw.long_context_input_multiplier === null
+            ? null
+            : Number(raw.long_context_input_multiplier),
+        long_context_output_multiplier:
+          raw.long_context_output_multiplier === null
+            ? null
+            : Number(raw.long_context_output_multiplier),
       };
       for (const c of cases) {
         const [row] = await sql<{ max_cost: string; usage_cost: string }>(
@@ -118,7 +156,14 @@ describe("token and cost estimates", () => {
         const label = `${raw.model_id} ${JSON.stringify(c)}`;
         expect(maxCostUsd(price, c.input, c.output), label).toBeCloseTo(Number(row!.max_cost), 8);
         expect(
-          usageCostUsd(price, { input_tokens: c.input, cached_tokens: c.cached, cache_write_tokens: c.cw, cache_write_30m_tokens: c.cw30, cache_write_12h_tokens: c.cw12, output_tokens: c.output }),
+          usageCostUsd(price, {
+            input_tokens: c.input,
+            cached_tokens: c.cached,
+            cache_write_tokens: c.cw,
+            cache_write_30m_tokens: c.cw30,
+            cache_write_12h_tokens: c.cw12,
+            output_tokens: c.output,
+          }),
           label,
         ).toBeCloseTo(Number(row!.usage_cost), 8);
         // A reservation is never smaller than what the same usage would cost.
@@ -131,9 +176,51 @@ describe("token and cost estimates", () => {
 describe("parameter rules", () => {
   it("accepts and rejects the same parameter combinations", async () => {
     const profiles: CapabilityProfile[] = [
-      { probe_version: 1, probed_at: "2026-11-10T00:00:00Z", chaining: true, reasoning_efforts: [], default_reasoning_effort: null, temperature: "always", top_p: "always", verbosity: [], max_output_tokens_verified: 2000, max_output_tokens_limit: null, background: false, returned_model: null, notes: [] },
-      { probe_version: 1, probed_at: "2026-11-10T00:00:00Z", chaining: true, reasoning_efforts: ["none", "low", "high"], default_reasoning_effort: "low", temperature: "effort_none", top_p: "never", verbosity: ["low", "medium", "high"], max_output_tokens_verified: 4000, max_output_tokens_limit: 8192, background: true, returned_model: null, notes: [] },
-      { probe_version: 1, probed_at: "2026-11-10T00:00:00Z", chaining: false, reasoning_efforts: ["low"], default_reasoning_effort: "low", temperature: "never", top_p: "never", verbosity: [], max_output_tokens_verified: 32, max_output_tokens_limit: null, background: false, returned_model: null, notes: [] },
+      {
+        probe_version: 1,
+        probed_at: "2026-11-10T00:00:00Z",
+        chaining: true,
+        reasoning_efforts: [],
+        default_reasoning_effort: null,
+        temperature: "always",
+        top_p: "always",
+        verbosity: [],
+        max_output_tokens_verified: 2000,
+        max_output_tokens_limit: null,
+        background: false,
+        returned_model: null,
+        notes: [],
+      },
+      {
+        probe_version: 1,
+        probed_at: "2026-11-10T00:00:00Z",
+        chaining: true,
+        reasoning_efforts: ["none", "low", "high"],
+        default_reasoning_effort: "low",
+        temperature: "effort_none",
+        top_p: "never",
+        verbosity: ["low", "medium", "high"],
+        max_output_tokens_verified: 4000,
+        max_output_tokens_limit: 8192,
+        background: true,
+        returned_model: null,
+        notes: [],
+      },
+      {
+        probe_version: 1,
+        probed_at: "2026-11-10T00:00:00Z",
+        chaining: false,
+        reasoning_efforts: ["low"],
+        default_reasoning_effort: "low",
+        temperature: "never",
+        top_p: "never",
+        verbosity: [],
+        max_output_tokens_verified: 32,
+        max_output_tokens_limit: null,
+        background: false,
+        returned_model: null,
+        notes: [],
+      },
     ];
     const params: Record<string, unknown>[] = [
       {},
@@ -159,7 +246,10 @@ describe("parameter rules", () => {
                 "select app_private.params_problem($1::jsonb, $2::jsonb, $3, $4, $5) as problem",
                 [JSON.stringify(profile), JSON.stringify(p), cap, chaining, mode],
               );
-              expect(paramsProblem(profile, p, cap, chaining, mode), JSON.stringify({ p, cap, chaining, mode })).toBe(row!.problem);
+              expect(
+                paramsProblem(profile, p, cap, chaining, mode),
+                JSON.stringify({ p, cap, chaining, mode }),
+              ).toBe(row!.problem);
             }
           }
         }

@@ -3,7 +3,15 @@ import { neutralizeFormula, parseCsv, parsePromptCsv, toCsv } from "@shared/core
 
 describe("CSV export", () => {
   it("neutralizes cells a spreadsheet would evaluate", () => {
-    for (const payload of ["=HYPERLINK(\"http://evil.test\")", "+1+1", "-2+3", "@SUM(A1:A2)", "\t=1", "\r=1", "  =cmd|' /C calc'!A0"]) {
+    for (const payload of [
+      '=HYPERLINK("http://evil.test")',
+      "+1+1",
+      "-2+3",
+      "@SUM(A1:A2)",
+      "\t=1",
+      "\r=1",
+      "  =cmd|' /C calc'!A0",
+    ]) {
       expect(neutralizeFormula(payload).startsWith("'")).toBe(true);
     }
     expect(neutralizeFormula("Plain text - with a dash")).toBe("Plain text - with a dash");
@@ -41,7 +49,9 @@ describe("CSV export", () => {
 
 describe("prompt CSV import", () => {
   it("reads a header row with body and label columns", () => {
-    expect(parsePromptCsv("label,body\nShort,What are the best {{category}}?\n,\"Second, with comma\"\n")).toEqual([
+    expect(
+      parsePromptCsv('label,body\nShort,What are the best {{category}}?\n,"Second, with comma"\n'),
+    ).toEqual([
       { body: "What are the best {{category}}?", label: "Short" },
       { body: "Second, with comma", label: null },
     ]);
@@ -55,6 +65,8 @@ describe("prompt CSV import", () => {
   });
 
   it("removes the apostrophe an earlier export added in front of a formula-like prompt", () => {
-    expect(parsePromptCsv("body\n\"'=not a formula, just text\"\n")).toEqual([{ body: "=not a formula, just text", label: null }]);
+    expect(parsePromptCsv('body\n"\'=not a formula, just text"\n')).toEqual([
+      { body: "=not a formula, just text", label: null },
+    ]);
   });
 });

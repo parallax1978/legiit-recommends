@@ -31,6 +31,7 @@ export function serviceKey(): string {
 }
 
 // deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped service-role client
 export type AdminClient = SupabaseClient<any, any, any>;
 
 /** Service-role client. Never handed to callers and never used with a user's token. */
@@ -60,7 +61,11 @@ export function json(body: unknown, status = 200): Response {
 
 /** Keeps the worker alive after the response has been sent, where the runtime supports it. */
 export function runInBackground(work: Promise<unknown>): boolean {
-  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime && typeof EdgeRuntime.waitUntil === "function") {
+  if (
+    typeof EdgeRuntime !== "undefined" &&
+    EdgeRuntime &&
+    typeof EdgeRuntime.waitUntil === "function"
+  ) {
     EdgeRuntime.waitUntil(work);
     return true;
   }

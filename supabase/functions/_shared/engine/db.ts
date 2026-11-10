@@ -113,13 +113,21 @@ export interface RunPlan {
   }[];
 }
 
-export type GateAction = "stale" | "paused" | "canceled" | "blocked" | "deferred" | "skipped" | "dead";
+export type GateAction =
+  "stale" | "paused" | "canceled" | "blocked" | "deferred" | "skipped" | "dead";
 
 export type BeginAttemptResult =
-  | { ok: true; attempt_id: string; attempt_number: number; reserved_usd: number; previous_response_id: string | null }
+  | {
+      ok: true;
+      attempt_id: string;
+      attempt_number: number;
+      reserved_usd: number;
+      previous_response_id: string | null;
+    }
   | { ok: false; action: GateAction; reason?: string };
 
-export type MaterializeResult = ({ ok: true } & Unit) | { ok: false; action: GateAction; reason?: string };
+export type MaterializeResult =
+  ({ ok: true } & Unit) | { ok: false; action: GateAction; reason?: string };
 
 export interface CommitResult {
   ok: boolean;
@@ -148,7 +156,12 @@ export interface EngineDb {
   materializeRun(ref: LeaseRef, plan: RunPlan): Promise<MaterializeResult>;
   beginAttempt(ref: LeaseRef, args: BeginAttemptArgs): Promise<BeginAttemptResult>;
   excludeCheck(ref: LeaseRef, reason: string, renderedPrompt: string | null): Promise<void>;
-  attemptInFlight(ref: LeaseRef, attemptId: string, responseId: string, pollInSeconds: number): Promise<void>;
+  attemptInFlight(
+    ref: LeaseRef,
+    attemptId: string,
+    responseId: string,
+    pollInSeconds: number,
+  ): Promise<void>;
   pollPending(ref: LeaseRef, attemptId: string, pollInSeconds: number): Promise<void>;
   commitResult(
     ref: LeaseRef,
@@ -175,11 +188,16 @@ export class DatabaseError extends Error {
 }
 
 function refArgs(ref: LeaseRef) {
-  return { p_job_id: ref.job_id, p_lease_token: ref.lease_token, p_fencing_token: ref.fencing_token };
+  return {
+    p_job_id: ref.job_id,
+    p_lease_token: ref.lease_token,
+    p_fencing_token: ref.fencing_token,
+  };
 }
 
 /** Database port backed by supabase-js with a service-role (secret) key. */
 // deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped service-role client
 export function createSupabaseEngineDb(client: SupabaseClient<any, any, any>): EngineDb {
   async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
     const { data, error } = await client.rpc(fn, args);
@@ -204,7 +222,11 @@ export function createSupabaseEngineDb(client: SupabaseClient<any, any, any>): E
       }),
 
     async excludeCheck(ref, reason, renderedPrompt) {
-      await rpc("svc_exclude_check", { ...refArgs(ref), p_reason: reason, p_rendered_prompt: renderedPrompt });
+      await rpc("svc_exclude_check", {
+        ...refArgs(ref),
+        p_reason: reason,
+        p_rendered_prompt: renderedPrompt,
+      });
     },
 
     async attemptInFlight(ref, attemptId, responseId, pollInSeconds) {
@@ -217,7 +239,11 @@ export function createSupabaseEngineDb(client: SupabaseClient<any, any, any>): E
     },
 
     async pollPending(ref, attemptId, pollInSeconds) {
-      await rpc("svc_poll_pending", { ...refArgs(ref), p_attempt_id: attemptId, p_poll_in_seconds: pollInSeconds });
+      await rpc("svc_poll_pending", {
+        ...refArgs(ref),
+        p_attempt_id: attemptId,
+        p_poll_in_seconds: pollInSeconds,
+      });
     },
 
     commitResult: (ref, attemptId, result, classification) => {
@@ -232,7 +258,11 @@ export function createSupabaseEngineDb(client: SupabaseClient<any, any, any>): E
     },
 
     failAttempt: (ref, attemptId, failure) =>
-      rpc<FailResult>("svc_fail_attempt", { ...refArgs(ref), p_attempt_id: attemptId, p_error: failure }),
+      rpc<FailResult>("svc_fail_attempt", {
+        ...refArgs(ref),
+        p_attempt_id: attemptId,
+        p_error: failure,
+      }),
 
     async releaseWork(ref, delaySeconds) {
       await rpc("svc_release_work", { ...refArgs(ref), p_delay_seconds: delaySeconds });

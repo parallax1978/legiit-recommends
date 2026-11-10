@@ -1,6 +1,7 @@
 import "server-only";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 import type { Database } from "./database.types";
 import { supabasePublishableKey, supabaseUrl } from "./env";
 
@@ -10,8 +11,12 @@ import { supabasePublishableKey, supabaseUrl } from "./env";
  * It carries the signed-in user's session and nothing more: every query runs under row level
  * security and every write goes through a database function that checks the user's role. The
  * web app never holds a service key.
+ *
+ * Everything read through it is per-user, live data, so rendering always waits for the request
+ * (`connection()`): nothing that depends on a session is ever prerendered or cached.
  */
 export async function createClient() {
+  await connection();
   const cookieStore = await cookies();
   return createServerClient<Database>(supabaseUrl(), supabasePublishableKey(), {
     cookies: {

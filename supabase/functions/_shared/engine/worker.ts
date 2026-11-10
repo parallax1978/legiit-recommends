@@ -10,13 +10,18 @@
 // last committed state. A request that was already sent is then recorded as "uncertain" and its
 // budget reservation is kept unresolved; nothing is ever replayed from the start of a conversation.
 
-import { useBackgroundMode } from "../core/capabilities.ts";
+import { shouldRunInBackground } from "../core/capabilities.ts";
 import { classifyResponse, mentionsTarget } from "../core/detection.ts";
 import { estimateSingleInputTokens, estimateTurnInputTokens } from "../core/estimate.ts";
 import { selectCombination } from "../core/selection.ts";
 import { hasRenderingProblem, renderTemplate } from "../core/templates.ts";
 import { buildFreshCheckRequest, buildTurnRequest, describeRequest } from "../provider/requests.ts";
-import type { ProviderClient, ProviderFactory, ProviderOutcome, ResponsesRequest } from "../provider/types.ts";
+import type {
+  ProviderClient,
+  ProviderFactory,
+  ProviderOutcome,
+  ResponsesRequest,
+} from "../provider/types.ts";
 import type { EngineDb, LeaseRef, RunPlan, Unit } from "./db.ts";
 
 export interface EngineConfig {
@@ -112,7 +117,9 @@ export function planRun(unit: Unit): RunPlan {
     };
   });
   const combinationIndex =
-    selection.combinationIndex <= 9_000_000_000_000_000_000n ? selection.combinationIndex.toString() : null;
+    selection.combinationIndex <= 9_000_000_000_000_000_000n
+      ? selection.combinationIndex.toString()
+      : null;
   return {
     combination_index: combinationIndex,
     // Visible in results: this run's opening question already named the business.
@@ -133,9 +140,13 @@ async function settle(
     const target = unit.kind === "conversation" ? unit.run!.target : unit.analysis_target!;
     // Classification happens only after the answer exists, and only locally.
     const classification =
-      outcome.result.status === "completed" ? classifyResponse(outcome.result.output_text, target) : null;
+      outcome.result.status === "completed"
+        ? classifyResponse(outcome.result.output_text, target)
+        : null;
     const committed = await deps.db.commitResult(ref, attemptId, outcome.result, classification);
-    return committed.ok ? `committed:${committed.next ?? "done"}` : `commit_rejected:${committed.action ?? "unknown"}`;
+    return committed.ok
+      ? `committed:${committed.next ?? "done"}`
+      : `commit_rejected:${committed.action ?? "unknown"}`;
   }
   if (outcome.kind === "pending") {
     if (pollCount === 0) {
@@ -188,7 +199,12 @@ async function handleTurn(deps: EngineDeps, claimed: Unit): Promise<UnitOutcome>
   if (!unit.run!.materialized) {
     const materialized = await deps.db.materializeRun(refOf(unit), planRun(unit));
     if (!materialized.ok) {
-      return { status: "processed", job_id: unit.job_id, kind: "materialize_only", result: `gate:${materialized.action}` };
+      return {
+        status: "processed",
+        job_id: unit.job_id,
+        kind: "materialize_only",
+        result: `gate:${materialized.action}`,
+      };
     }
     unit = { ...unit, ...materialized };
   }
@@ -200,7 +216,7 @@ async function handleTurn(deps: EngineDeps, claimed: Unit): Promise<UnitOutcome>
   }
 
   const params = run.model_params ?? {};
-  const background = useBackgroundMode({
+  const background = shouldRunInBackground({
     mode: run.execution_mode ?? "auto",
     params,
     maxOutputTokens: run.max_output_tokens,
@@ -218,7 +234,10 @@ async function handleTurn(deps: EngineDeps, claimed: Unit): Promise<UnitOutcome>
     background,
     clientRequestId: "",
   });
-  const estInput = estimateTurnInputTokens(turn.rendered_prompt, turn.step_index > 1 ? (unit.previous_usage ?? null) : null);
+  const estInput = estimateTurnInputTokens(
+    turn.rendered_prompt,
+    turn.step_index > 1 ? (unit.previous_usage ?? null) : null,
+  );
   const result = await sendAndSettle(deps, unit, request, background, null, estInput);
   return { status: "processed", job_id: unit.job_id, kind: "turn", result };
 }
@@ -229,16 +248,26 @@ async function handleCheck(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
 
   if (hasRenderingProblem(prompt)) {
     await deps.db.excludeCheck(refOf(unit), "question_not_renderable", prompt);
-    return { status: "processed", job_id: unit.job_id, kind: "check", result: "excluded:question_not_renderable" };
+    return {
+      status: "processed",
+      job_id: unit.job_id,
+      kind: "check",
+      result: "excluded:question_not_renderable",
+    };
   }
   // Guard: a fresh check must not name the target. The target is read here only to compare.
   if (unit.analysis_target && mentionsTarget(prompt, unit.analysis_target)) {
     await deps.db.excludeCheck(refOf(unit), "target_leak", prompt);
-    return { status: "processed", job_id: unit.job_id, kind: "check", result: "excluded:target_leak" };
+    return {
+      status: "processed",
+      job_id: unit.job_id,
+      kind: "check",
+      result: "excluded:target_leak",
+    };
   }
 
   const params = check.params ?? {};
-  const background = useBackgroundMode({
+  const background = shouldRunInBackground({
     mode: check.execution_mode ?? "auto",
     params,
     maxOutputTokens: check.max_output_tokens,
@@ -254,13 +283,25 @@ async function handleCheck(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
     background,
     clientRequestId: "",
   });
-  const result = await sendAndSettle(deps, unit, request, background, prompt, estimateSingleInputTokens(prompt));
+  const result = await sendAndSettle(
+    deps,
+    unit,
+    request,
+    background,
+    prompt,
+    estimateSingleInputTokens(prompt),
+  );
   return { status: "processed", job_id: unit.job_id, kind: "check", result };
 }
 
 async function handlePoll(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
   const poll = unit.poll!;
-  const done = (result: string): UnitOutcome => ({ status: "processed", job_id: unit.job_id, kind: "poll", result });
+  const done = (result: string): UnitOutcome => ({
+    status: "processed",
+    job_id: unit.job_id,
+    kind: "poll",
+    result,
+  });
 
   const provider = await providerFor(deps, unit);
   if (!provider) {
@@ -268,7 +309,9 @@ async function handlePoll(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
     return done("poll_deferred:no_credentials");
   }
 
-  let outcome = await provider.retrieveResponse(poll.response_id, { timeoutMs: deps.config.shortTimeoutMs });
+  let outcome = await provider.retrieveResponse(poll.response_id, {
+    timeoutMs: deps.config.shortTimeoutMs,
+  });
 
   if (outcome.kind === "failure") {
     const { failure } = outcome;
@@ -285,7 +328,11 @@ async function handlePoll(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
     }
     // A failed status check says nothing about the response. Keep it in flight and look again.
     if (failure.response_id === null) {
-      await deps.db.pollPending(refOf(unit), poll.attempt_id, Math.max(pollDelay(poll.poll_count + 1), 15));
+      await deps.db.pollPending(
+        refOf(unit),
+        poll.attempt_id,
+        Math.max(pollDelay(poll.poll_count + 1), 15),
+      );
       return done(`poll_deferred:${failure.class}`);
     }
   }
@@ -293,8 +340,13 @@ async function handlePoll(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
   if (outcome.kind === "pending") {
     const age = Date.now() - Date.parse(poll.started_at);
     if (age > deps.config.backgroundMaxMs) {
-      const canceled = await provider.cancelResponse(poll.response_id, { timeoutMs: deps.config.shortTimeoutMs });
-      if (canceled.kind === "pending" || (canceled.kind === "failure" && canceled.failure.response_id === null)) {
+      const canceled = await provider.cancelResponse(poll.response_id, {
+        timeoutMs: deps.config.shortTimeoutMs,
+      });
+      if (
+        canceled.kind === "pending" ||
+        (canceled.kind === "failure" && canceled.failure.response_id === null)
+      ) {
         // Could not confirm cancellation: the response may still complete and be billed.
         const failed = await deps.db.failAttempt(refOf(unit), poll.attempt_id, {
           class: "timeout",
@@ -303,7 +355,8 @@ async function handlePoll(deps: EngineDeps, unit: Unit): Promise<UnitOutcome> {
           type: null,
           code: "background_timeout",
           param: null,
-          message: "The background response did not finish in time and its cancellation could not be confirmed.",
+          message:
+            "The background response did not finish in time and its cancellation could not be confirmed.",
           retry_after_ms: null,
           provider_request_id: null,
           response_id: poll.response_id,

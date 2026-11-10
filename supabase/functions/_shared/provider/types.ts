@@ -132,7 +132,9 @@ export interface ProviderClient {
   retrieveResponse(responseId: string, options: CallOptions): Promise<ProviderOutcome>;
   cancelResponse(responseId: string, options: CallOptions): Promise<ProviderOutcome>;
   /** Models visible to the key. Free; also serves as the connection test. */
-  listModels(options: CallOptions): Promise<{ ok: true; models: ProviderModel[] } | { ok: false; failure: ProviderFailure }>;
+  listModels(
+    options: CallOptions,
+  ): Promise<{ ok: true; models: ProviderModel[] } | { ok: false; failure: ProviderFailure }>;
 }
 
 export type ProviderFactory = (apiKey: string) => ProviderClient;

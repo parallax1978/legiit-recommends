@@ -53,7 +53,9 @@ describe("fresh checks", () => {
   it("collects the baseline before any conversation is dispatched", async () => {
     const workspace = await createWorkspace();
     const connection = await createConnection(workspace, fake);
-    const campaign = await createCampaign(workspace, connection, { config: { baseline_samples: 4 } });
+    const campaign = await createCampaign(workspace, connection, {
+      config: { baseline_samples: 4 },
+    });
     fake.reset();
 
     await launch(workspace, campaign);
@@ -72,7 +74,9 @@ describe("fresh checks", () => {
 
     const baseline = await checks(campaign.id);
     expect(baseline).toHaveLength(4);
-    expect(baseline.every((check) => check.phase === "baseline" && check.status === "completed")).toBe(true);
+    expect(
+      baseline.every((check) => check.phase === "baseline" && check.status === "completed"),
+    ).toBe(true);
     // Questions are allocated evenly across the set, held-out ones included.
     expect(baseline.filter((check) => check.is_held_out)).toHaveLength(2);
 
@@ -87,7 +91,9 @@ describe("fresh checks", () => {
   it("never sends target, campaign or conversation context with a fresh check", async () => {
     const workspace = await createWorkspace();
     const connection = await createConnection(workspace, fake);
-    const campaign = await createCampaign(workspace, connection, { config: { baseline_samples: 4 } });
+    const campaign = await createCampaign(workspace, connection, {
+      config: { baseline_samples: 4 },
+    });
     fake.reset();
     await launch(workspace, campaign);
     await drain(fake);
@@ -107,15 +113,24 @@ describe("fresh checks", () => {
     ];
     for (const request of requests) {
       // Exactly one question and the model settings: nothing else.
-      expect(Object.keys(request.body!).sort()).toEqual(["input", "max_output_tokens", "model", "store"]);
+      expect(Object.keys(request.body!).sort()).toEqual([
+        "input",
+        "max_output_tokens",
+        "model",
+        "store",
+      ]);
       expect(request.body).not.toHaveProperty("previous_response_id");
       expect(request.body).not.toHaveProperty("instructions");
       expect(request.body).not.toHaveProperty("metadata");
       expect(request.body!.store).toBe(false);
-      for (const text of forbidden) expect(request.raw.toLowerCase()).not.toContain(text.toLowerCase());
+      for (const text of forbidden)
+        expect(request.raw.toLowerCase()).not.toContain(text.toLowerCase());
       // The only identifier sent is the opaque attempt id.
       const clientRequestId = request.headers["x-client-request-id"]!;
-      const attempts = await sql("select 1 from public.provider_attempts where id::text = $1 and purpose = 'fresh_check'", [clientRequestId]);
+      const attempts = await sql(
+        "select 1 from public.provider_attempts where id::text = $1 and purpose = 'fresh_check'",
+        [clientRequestId],
+      );
       expect(attempts).toHaveLength(1);
     }
     expect(new Set(requests.map((r) => r.body!.input))).toEqual(
@@ -155,10 +170,14 @@ describe("fresh checks", () => {
       "select response_id from public.run_turns where campaign_id = $1 and step_index = 3",
       [campaign.id],
     );
-    const daily = (await checks(campaign.id)).filter((check) => check.phase === "daily" && check.status === "completed");
+    const daily = (await checks(campaign.id)).filter(
+      (check) => check.phase === "daily" && check.status === "completed",
+    );
     expect(daily.length).toBeGreaterThan(0);
     for (const check of daily) {
-      const stored = fake.requests.find((r) => r.body?.input === check.rendered_prompt && !r.body?.previous_response_id);
+      const stored = fake.requests.find(
+        (r) => r.body?.input === check.rendered_prompt && !r.body?.previous_response_id,
+      );
       expect(stored).toBeDefined();
       // A single question with no link to the conversation's response chain.
       expect(check.response_id).not.toBe(turn!.response_id);
@@ -197,13 +216,17 @@ describe("fresh checks", () => {
     });
     const overlap = await expectDbError(launch(workspace, overlapping), "campaign_invalid");
     expect(overlap.message).toMatch(/Held-out question/);
-    expect(fake.responseRequests().filter((r) => String(r.body!.input).includes("Northwind"))).toHaveLength(0);
+    expect(
+      fake.responseRequests().filter((r) => String(r.body!.input).includes("Northwind")),
+    ).toHaveLength(0);
   });
 
   it("excludes a check at run time if its prompt would name the target, without sending it", async () => {
     const workspace = await createWorkspace();
     const connection = await createConnection(workspace, fake);
-    const campaign = await createCampaign(workspace, connection, { config: { baseline_samples: 2 } });
+    const campaign = await createCampaign(workspace, connection, {
+      config: { baseline_samples: 2 },
+    });
     fake.reset();
     await launch(workspace, campaign);
     // Simulate a prompt that slipped past validation.
@@ -258,12 +281,20 @@ describe("fresh checks", () => {
     await tick(afterEnd);
     expect(await campaignStatus(campaign.id)).toBe("finalizing");
     // End time alone does not trigger the final checks while a conversation is unresolved.
-    expect(await sql("select 1 from public.jobs where campaign_id = $1 and kind = 'check_final'", [campaign.id])).toHaveLength(0);
+    expect(
+      await sql("select 1 from public.jobs where campaign_id = $1 and kind = 'check_final'", [
+        campaign.id,
+      ]),
+    ).toHaveLength(0);
 
     // The conversation finishes; only then are final checks created and run.
     await drain(fake);
     await tick(new Date(afterEnd.getTime() + 60_000));
-    expect(await sql("select 1 from public.jobs where campaign_id = $1 and kind = 'check_final'", [campaign.id])).toHaveLength(3);
+    expect(
+      await sql("select 1 from public.jobs where campaign_id = $1 and kind = 'check_final'", [
+        campaign.id,
+      ]),
+    ).toHaveLength(3);
     await drain(fake);
     await tick(new Date(afterEnd.getTime() + 120_000));
     expect(await campaignStatus(campaign.id)).toBe("completed");
@@ -297,7 +328,10 @@ describe("fresh checks", () => {
     await tick(new Date(slot!.scheduled_for));
     await drain(fake, { max: 1 });
     // The run is stuck waiting for budget in the middle of the conversation.
-    await sql("update public.jobs set status = 'blocked', status_reason = 'campaign_total_budget_exhausted', queue_msg_id = null where campaign_id = $1 and kind = 'conversation' and status = 'queued'", [campaign.id]);
+    await sql(
+      "update public.jobs set status = 'blocked', status_reason = 'campaign_total_budget_exhausted', queue_msg_id = null where campaign_id = $1 and kind = 'conversation' and status = 'queued'",
+      [campaign.id],
+    );
     await sql("select pgmq.purge_queue('lr_work')");
 
     await tick(new Date(end.getTime() + 60_000));
@@ -309,13 +343,19 @@ describe("fresh checks", () => {
       [campaign.id],
     );
     expect(run).toMatchObject({ status: "unresolved", error_class: "unresolved_at_campaign_end" });
-    expect(await sql("select 1 from public.jobs where campaign_id = $1 and kind = 'check_final'", [campaign.id])).toHaveLength(1);
+    expect(
+      await sql("select 1 from public.jobs where campaign_id = $1 and kind = 'check_final'", [
+        campaign.id,
+      ]),
+    ).toHaveLength(1);
   });
 
   it("starts a new comparison group when the question set or check settings change", async () => {
     const workspace = await createWorkspace();
     const connection = await createConnection(workspace, fake);
-    const campaign = await createCampaign(workspace, connection, { config: { baseline_samples: 2 } });
+    const campaign = await createCampaign(workspace, connection, {
+      config: { baseline_samples: 2 },
+    });
     fake.reset();
     await launch(workspace, campaign);
     await drain(fake);
@@ -327,11 +367,19 @@ describe("fresh checks", () => {
       p_campaign_id: campaign.id,
       p_patch: { config: { conversations_per_day: 12 } },
     });
-    let draft = await rpc<{ revision_id: string }>(workspace.owner.client, "campaign_launch_check", { p_campaign_id: campaign.id });
-    let applied = await rpc<{ new_comparison_group: boolean }>(workspace.owner.client, "apply_campaign_changes", {
-      p_campaign_id: campaign.id,
-      p_expected_revision_id: draft.revision_id,
-    });
+    let draft = await rpc<{ revision_id: string }>(
+      workspace.owner.client,
+      "campaign_launch_check",
+      { p_campaign_id: campaign.id },
+    );
+    let applied = await rpc<{ new_comparison_group: boolean }>(
+      workspace.owner.client,
+      "apply_campaign_changes",
+      {
+        p_campaign_id: campaign.id,
+        p_expected_revision_id: draft.revision_id,
+      },
+    );
     expect(applied.new_comparison_group).toBe(false);
 
     // Changing the allocation starts a new, separately labelled group with its own reference sample.
@@ -339,14 +387,24 @@ describe("fresh checks", () => {
       p_campaign_id: campaign.id,
       p_patch: { config: { daily_checks: 6 } },
     });
-    draft = await rpc<{ revision_id: string }>(workspace.owner.client, "campaign_launch_check", { p_campaign_id: campaign.id });
-    applied = await rpc<{ new_comparison_group: boolean }>(workspace.owner.client, "apply_campaign_changes", {
+    draft = await rpc<{ revision_id: string }>(workspace.owner.client, "campaign_launch_check", {
       p_campaign_id: campaign.id,
-      p_expected_revision_id: draft.revision_id,
     });
+    applied = await rpc<{ new_comparison_group: boolean }>(
+      workspace.owner.client,
+      "apply_campaign_changes",
+      {
+        p_campaign_id: campaign.id,
+        p_expected_revision_id: draft.revision_id,
+      },
+    );
     expect(applied.new_comparison_group).toBe(true);
 
-    const groups = await sql<{ sequence: number; started_mid_campaign: boolean; daily_checks: number }>(
+    const groups = await sql<{
+      sequence: number;
+      started_mid_campaign: boolean;
+      daily_checks: number;
+    }>(
       "select sequence, started_mid_campaign, daily_checks from public.comparison_groups where campaign_id = $1 order by sequence",
       [campaign.id],
     );
@@ -364,7 +422,9 @@ describe("fresh checks", () => {
     // Results are reported per group and never merged across groups.
     expect(new Set(metrics.map((row) => row.group_sequence))).toEqual(new Set([1, 2]));
     for (const sequence of [1, 2]) {
-      const total = metrics.filter((row) => row.group_sequence === sequence && row.phase === "baseline").reduce((sum, row) => sum + Number(row.total), 0);
+      const total = metrics
+        .filter((row) => row.group_sequence === sequence && row.phase === "baseline")
+        .reduce((sum, row) => sum + Number(row.total), 0);
       expect(total).toBe(2);
     }
   });

@@ -27,7 +27,12 @@ export interface RecordedRequest {
 }
 
 export type Behavior =
-  | { type: "http_error"; status: number; error: { message: string; type?: string; code?: string | null; param?: string | null }; headers?: Record<string, string> }
+  | {
+      type: "http_error";
+      status: number;
+      error: { message: string; type?: string; code?: string | null; param?: string | null };
+      headers?: Record<string, string>;
+    }
   | { type: "incomplete"; reason?: string }
   | { type: "hang" }
   | { type: "drop_after_processing" }
@@ -78,15 +83,65 @@ interface ModelSpec {
 
 // Fictional model ids: they exist only inside this test double.
 export const FAKE_MODELS: ModelSpec[] = [
-  { id: "fake-chat-1", reasoning: false, efforts: [], defaultEffort: null, sampling: "always", verbosity: false, maxOutput: 8192, background: true, shutdown_date: null },
-  { id: "fake-reasoning-1", reasoning: true, efforts: ["none", "low", "medium", "high"], defaultEffort: "medium", sampling: "effort_none", verbosity: true, maxOutput: 32768, background: true, shutdown_date: null },
-  { id: "fake-legacy-1", reasoning: false, efforts: [], defaultEffort: null, sampling: "always", verbosity: false, maxOutput: 4096, background: false, shutdown_date: "2027-01-14" },
-  { id: "fake-embedding-1", reasoning: false, efforts: [], defaultEffort: null, sampling: "never", verbosity: false, maxOutput: 0, background: false, shutdown_date: null },
+  {
+    id: "fake-chat-1",
+    reasoning: false,
+    efforts: [],
+    defaultEffort: null,
+    sampling: "always",
+    verbosity: false,
+    maxOutput: 8192,
+    background: true,
+    shutdown_date: null,
+  },
+  {
+    id: "fake-reasoning-1",
+    reasoning: true,
+    efforts: ["none", "low", "medium", "high"],
+    defaultEffort: "medium",
+    sampling: "effort_none",
+    verbosity: true,
+    maxOutput: 32768,
+    background: true,
+    shutdown_date: null,
+  },
+  {
+    id: "fake-legacy-1",
+    reasoning: false,
+    efforts: [],
+    defaultEffort: null,
+    sampling: "always",
+    verbosity: false,
+    maxOutput: 4096,
+    background: false,
+    shutdown_date: "2027-01-14",
+  },
+  {
+    id: "fake-embedding-1",
+    reasoning: false,
+    efforts: [],
+    defaultEffort: null,
+    sampling: "never",
+    verbosity: false,
+    maxOutput: 0,
+    background: false,
+    shutdown_date: null,
+  },
 ];
 
 const BUSINESS_POOL = [
-  "Alder & Finch", "Birchline Studio", "Cobalt Harbor", "Dune Atlas", "Ember Row", "Fathom Works",
-  "Gable North", "Harrow Lane", "Indigo Quay", "Juniper Field", "Kestrel Yard", "Lumen Wharf",
+  "Alder & Finch",
+  "Birchline Studio",
+  "Cobalt Harbor",
+  "Dune Atlas",
+  "Ember Row",
+  "Fathom Works",
+  "Gable North",
+  "Harrow Lane",
+  "Indigo Quay",
+  "Juniper Field",
+  "Kestrel Yard",
+  "Lumen Wharf",
 ];
 
 export const VALID_KEY_PREFIX = "sk-fake-valid";
@@ -107,11 +162,16 @@ function tokens(text: string): number {
 
 function pickBase(question: string): string[] {
   const start = hash(question) % BUSINESS_POOL.length;
-  return Array.from({ length: 5 }, (_, i) => BUSINESS_POOL[(start + i * 5) % BUSINESS_POOL.length]!);
+  return Array.from(
+    { length: 5 },
+    (_, i) => BUSINESS_POOL[(start + i * 5) % BUSINESS_POOL.length]!,
+  );
 }
 
 function renderList(names: string[]): string {
-  return names.map((name, index) => `${index + 1}. **${name}** – a well-reviewed option.`).join("\n");
+  return names
+    .map((name, index) => `${index + 1}. **${name}** – a well-reviewed option.`)
+    .join("\n");
 }
 
 /** A business the user asks to add: the first phrase in double quotes. */
@@ -142,7 +202,8 @@ export class FakeOpenAI {
   async start(port = 0, host = "127.0.0.1"): Promise<this> {
     this.server = createServer((req, res) => {
       void this.handle(req, res).catch((error) => {
-        if (!res.headersSent) this.send(res, 500, { error: { message: String(error), type: "server_error" } });
+        if (!res.headersSent)
+          this.send(res, 500, { error: { message: String(error), type: "server_error" } });
       });
     });
     await new Promise<void>((resolve) => this.server!.listen(port, host, resolve));
@@ -172,8 +233,15 @@ export class FakeOpenAI {
   }
 
   /** Applies `behavior` to the next `times` matching POST /v1/responses requests. */
-  script(behavior: Behavior, options: { times?: number; when?: (request: RecordedRequest) => boolean } = {}): void {
-    this.rules.push({ when: options.when ?? (() => true), behavior, remaining: options.times ?? 1 });
+  script(
+    behavior: Behavior,
+    options: { times?: number; when?: (request: RecordedRequest) => boolean } = {},
+  ): void {
+    this.rules.push({
+      when: options.when ?? (() => true),
+      behavior,
+      remaining: options.times ?? 1,
+    });
   }
 
   /** Makes first answers to matching questions include a business without being asked. */
@@ -202,7 +270,12 @@ export class FakeOpenAI {
 
   // -------------------------------------------------------------------------------------------
 
-  private send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  private send(
+    res: ServerResponse,
+    status: number,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ): void {
     res.writeHead(status, {
       "content-type": "application/json",
       "x-request-id": `req_fake_${++this.idCounter}`,
@@ -212,11 +285,24 @@ export class FakeOpenAI {
     res.end(JSON.stringify(body));
   }
 
-  private error(res: ServerResponse, status: number, message: string, extra: { type?: string; code?: string | null; param?: string | null } = {}, headers: Record<string, string> = {}): void {
+  private error(
+    res: ServerResponse,
+    status: number,
+    message: string,
+    extra: { type?: string; code?: string | null; param?: string | null } = {},
+    headers: Record<string, string> = {},
+  ): void {
     this.send(
       res,
       status,
-      { error: { message, type: extra.type ?? "invalid_request_error", param: extra.param ?? null, code: extra.code ?? null } },
+      {
+        error: {
+          message,
+          type: extra.type ?? "invalid_request_error",
+          param: extra.param ?? null,
+          code: extra.code ?? null,
+        },
+      },
       headers,
     );
   }
@@ -255,7 +341,10 @@ export class FakeOpenAI {
     const key = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
     const validKey = key.startsWith(VALID_KEY_PREFIX) || key.startsWith(NO_QUOTA_KEY_PREFIX);
     if (!validKey) {
-      return this.error(res, 401, "Incorrect API key provided.", { type: "invalid_request_error", code: "invalid_api_key" });
+      return this.error(res, 401, "Incorrect API key provided.", {
+        type: "invalid_request_error",
+        code: "invalid_api_key",
+      });
     }
 
     if (recorded.method === "GET" && url.pathname === "/v1/models") {
@@ -279,10 +368,15 @@ export class FakeOpenAI {
 
     if (recorded.method === "POST" && url.pathname === "/v1/responses") {
       if (key.startsWith(NO_QUOTA_KEY_PREFIX)) {
-        return this.error(res, 429, "You exceeded your current quota, please check your plan and billing details.", {
-          type: "insufficient_quota",
-          code: "insufficient_quota",
-        });
+        return this.error(
+          res,
+          429,
+          "You exceeded your current quota, please check your plan and billing details.",
+          {
+            type: "insufficient_quota",
+            code: "insufficient_quota",
+          },
+        );
       }
       return this.create(res, recorded);
     }
@@ -302,7 +396,10 @@ export class FakeOpenAI {
       model: stored.model,
       previous_response_id: stored.previous_response_id,
       error: null,
-      incomplete_details: stored.status === "incomplete" ? { reason: stored.incomplete_reason ?? "max_output_tokens" } : null,
+      incomplete_details:
+        stored.status === "incomplete"
+          ? { reason: stored.incomplete_reason ?? "max_output_tokens" }
+          : null,
       instructions: null,
       metadata: {},
       parallel_tool_calls: true,
@@ -351,8 +448,10 @@ export class FakeOpenAI {
 
   private cancel(res: ServerResponse, id: string): void {
     const stored = this.responses.get(id);
-    if (!stored) return this.error(res, 404, `Response with id '${id}' not found.`, { code: "not_found" });
-    if (!stored.background) return this.error(res, 400, "Only background responses can be cancelled.");
+    if (!stored)
+      return this.error(res, 404, `Response with id '${id}' not found.`, { code: "not_found" });
+    if (!stored.background)
+      return this.error(res, 400, "Only background responses can be cancelled.");
     if (stored.status === "queued" || stored.status === "in_progress") stored.status = "cancelled";
     this.send(res, 200, this.toJson(stored));
   }
@@ -362,45 +461,87 @@ export class FakeOpenAI {
     const modelId = typeof body.model === "string" ? body.model : "";
     const model = FAKE_MODELS.find((m) => m.id === modelId);
     if (!model || model.maxOutput === 0) {
-      return this.error(res, 404, `The model \`${modelId}\` does not exist or you do not have access to it.`, {
-        code: "model_not_found",
-        param: "model",
-      });
+      return this.error(
+        res,
+        404,
+        `The model \`${modelId}\` does not exist or you do not have access to it.`,
+        {
+          code: "model_not_found",
+          param: "model",
+        },
+      );
     }
 
     // Parameter validation, shaped like the real API's errors.
     const maxOutput = body.max_output_tokens as number | undefined;
     if (typeof maxOutput === "number" && maxOutput < 16) {
-      return this.error(res, 400, `Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got ${maxOutput} instead.`, { code: "integer_below_min_value", param: "max_output_tokens" });
+      return this.error(
+        res,
+        400,
+        `Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got ${maxOutput} instead.`,
+        { code: "integer_below_min_value", param: "max_output_tokens" },
+      );
     }
     if (typeof maxOutput === "number" && maxOutput > model.maxOutput) {
-      return this.error(res, 400, `Invalid 'max_output_tokens': integer above maximum value. Expected a value <= ${model.maxOutput}, but got ${maxOutput} instead.`, { code: "integer_above_max_value", param: "max_output_tokens" });
+      return this.error(
+        res,
+        400,
+        `Invalid 'max_output_tokens': integer above maximum value. Expected a value <= ${model.maxOutput}, but got ${maxOutput} instead.`,
+        { code: "integer_above_max_value", param: "max_output_tokens" },
+      );
     }
     const effort = (body.reasoning as { effort?: string } | undefined)?.effort;
     if (effort !== undefined && effort !== null) {
       if (!model.reasoning) {
-        return this.error(res, 400, "Unsupported parameter: 'reasoning.effort' is not supported with this model.", { code: "unsupported_parameter", param: "reasoning.effort" });
+        return this.error(
+          res,
+          400,
+          "Unsupported parameter: 'reasoning.effort' is not supported with this model.",
+          { code: "unsupported_parameter", param: "reasoning.effort" },
+        );
       }
       if (!model.efforts.includes(effort)) {
-        return this.error(res, 400, `Unsupported value: 'reasoning.effort' does not support '${effort}' with this model.`, { code: "unsupported_value", param: "reasoning.effort" });
+        return this.error(
+          res,
+          400,
+          `Unsupported value: 'reasoning.effort' does not support '${effort}' with this model.`,
+          { code: "unsupported_value", param: "reasoning.effort" },
+        );
       }
     }
     for (const param of ["temperature", "top_p"] as const) {
       if (body[param] === undefined || body[param] === null) continue;
-      const allowed = model.sampling === "always" || (model.sampling === "effort_none" && effort === "none");
+      const allowed =
+        model.sampling === "always" || (model.sampling === "effort_none" && effort === "none");
       if (!allowed) {
-        return this.error(res, 400, `Unsupported parameter: '${param}' is not supported with this model.`, { code: "unsupported_parameter", param });
+        return this.error(
+          res,
+          400,
+          `Unsupported parameter: '${param}' is not supported with this model.`,
+          { code: "unsupported_parameter", param },
+        );
       }
     }
     const verbosity = (body.text as { verbosity?: string } | undefined)?.verbosity;
     if (verbosity && !model.verbosity) {
-      return this.error(res, 400, "Unsupported parameter: 'text.verbosity' is not supported with this model.", { code: "unsupported_parameter", param: "text.verbosity" });
+      return this.error(
+        res,
+        400,
+        "Unsupported parameter: 'text.verbosity' is not supported with this model.",
+        { code: "unsupported_parameter", param: "text.verbosity" },
+      );
     }
     if (body.background === true && !model.background) {
-      return this.error(res, 400, "Unsupported parameter: 'background' is not supported with this model.", { code: "unsupported_parameter", param: "background" });
+      return this.error(
+        res,
+        400,
+        "Unsupported parameter: 'background' is not supported with this model.",
+        { code: "unsupported_parameter", param: "background" },
+      );
     }
 
-    const previousId = typeof body.previous_response_id === "string" ? body.previous_response_id : null;
+    const previousId =
+      typeof body.previous_response_id === "string" ? body.previous_response_id : null;
     const previous = previousId ? this.responses.get(previousId) : undefined;
     if (previousId && (!previous || this.expired.has(previousId))) {
       return this.error(res, 400, `Previous response with id '${previousId}' not found.`, {
@@ -415,7 +556,13 @@ export class FakeOpenAI {
     const behavior = rule?.behavior;
 
     if (behavior?.type === "http_error") {
-      return this.error(res, behavior.status, behavior.error.message, behavior.error, behavior.headers ?? {});
+      return this.error(
+        res,
+        behavior.status,
+        behavior.error.message,
+        behavior.error,
+        behavior.headers ?? {},
+      );
     }
     if (behavior?.type === "hang") {
       // Accept the request and never answer: the client will hit its own deadline.
@@ -435,7 +582,8 @@ export class FakeOpenAI {
     } else if (typeof body.instructions === "string" && /variations/i.test(body.instructions)) {
       // Variation generation request.
       const count = Number(/Write (\d+) distinct/.exec(body.instructions)?.[1] ?? 3);
-      const usesName = /\{\{business_name\}\}/.test(body.instructions) && /Always refer/.test(body.instructions);
+      const usesName =
+        /\{\{business_name\}\}/.test(body.instructions) && /Always refer/.test(body.instructions);
       outputText = JSON.stringify({
         variations: Array.from({ length: count }, (_, i) =>
           usesName
@@ -443,7 +591,10 @@ export class FakeOpenAI {
             : `Variation ${i + 1}: what are good options for {{category}}?`,
         ),
       });
-    } else if (typeof body.instructions === "string" && /You label whether/.test(body.instructions)) {
+    } else if (
+      typeof body.instructions === "string" &&
+      /You label whether/.test(body.instructions)
+    ) {
       // Model-based classification request.
       const parsed = JSON.parse(input) as { business: { name: string }; answer: string };
       const mentioned = parsed.answer.toLowerCase().includes(parsed.business.name.toLowerCase());
@@ -455,7 +606,9 @@ export class FakeOpenAI {
       });
     } else if (!previous) {
       const names = [...base];
-      const organic = this.organic.find((rule) => input.toLowerCase().includes(rule.questionIncludes));
+      const organic = this.organic.find((rule) =>
+        input.toLowerCase().includes(rule.questionIncludes),
+      );
       if (organic) names.splice(Math.min(organic.position - 1, names.length), 0, organic.business);
       outputText = `Here are some options worth considering:\n\n${renderList(names)}\n\nLet me know if you'd like more detail on any of these.`;
     } else {
@@ -475,7 +628,10 @@ export class FakeOpenAI {
     const cap = typeof maxOutput === "number" ? maxOutput : model.maxOutput;
     if (behavior?.type === "incomplete" || outputTokens > cap) {
       status = "incomplete";
-      incompleteReason = behavior?.type === "incomplete" ? (behavior.reason ?? "max_output_tokens") : "max_output_tokens";
+      incompleteReason =
+        behavior?.type === "incomplete"
+          ? (behavior.reason ?? "max_output_tokens")
+          : "max_output_tokens";
       outputText = outputText.slice(0, Math.max(0, Math.min(outputText.length, cap * 4, 40)));
       outputTokens = Math.min(outputTokens, cap);
     }
@@ -511,7 +667,10 @@ export class FakeOpenAI {
     if (behavior?.type === "failed_response") {
       return this.send(res, 200, {
         ...this.toJson({ ...stored, status: "failed" }),
-        error: { code: behavior.code ?? "server_error", message: behavior.message ?? "The model failed to generate a response." },
+        error: {
+          code: behavior.code ?? "server_error",
+          message: behavior.message ?? "The model failed to generate a response.",
+        },
         output: [],
         usage: null,
       });

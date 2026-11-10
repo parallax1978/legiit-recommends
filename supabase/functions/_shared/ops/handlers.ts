@@ -27,6 +27,7 @@ import { describeRequest } from "../provider/requests.ts";
 import type { ProviderFactory, ProviderFailure, ProviderOutcome } from "../provider/types.ts";
 
 // deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped service-role client
 type Admin = SupabaseClient<any, any, any>;
 
 export interface OpsContext {
@@ -38,24 +39,38 @@ export interface OpsContext {
   siteUrl?: string;
 }
 
-export type OpsResult = { ok: true; [key: string]: unknown } | { ok: false; code: string; message: string };
+export type OpsResult =
+  { ok: true; [key: string]: unknown } | { ok: false; code: string; message: string };
 
 type Role = "owner" | "admin" | "member";
 
 const fail = (code: string, message: string): OpsResult => ({ ok: false, code, message });
 
 function isUuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+  );
 }
 
 /** Converts a database error raised by app_private.fail/forbid into a result. */
-function fromDbError(error: { message: string; details?: string | null; code?: string }): OpsResult {
+function fromDbError(error: {
+  message: string;
+  details?: string | null;
+  code?: string;
+}): OpsResult {
   if (error.code === "42501") return fail("forbidden", error.message);
-  return fail(error.details && /^[a-z_]+$/.test(error.details) ? error.details : "database_error", error.message);
+  return fail(
+    error.details && /^[a-z_]+$/.test(error.details) ? error.details : "database_error",
+    error.message,
+  );
 }
 
 async function roleIn(ctx: OpsContext, workspaceId: string): Promise<Role | null> {
-  const { data } = await ctx.admin.rpc("svc_member_role", { p_workspace_id: workspaceId, p_user_id: ctx.userId });
+  const { data } = await ctx.admin.rpc("svc_member_role", {
+    p_workspace_id: workspaceId,
+    p_user_id: ctx.userId,
+  });
   return (data as Role | null) ?? null;
 }
 
@@ -71,22 +86,34 @@ export function describeFailure(failure: ProviderFailure): { code: string; messa
   const detail = failure.message ? ` (${failure.message.slice(0, 300)})` : "";
   switch (failure.class) {
     case "invalid_credentials":
-      return { code: failure.class, message: `OpenAI rejected the API key. Check that it is correct, active and allowed for this project.${detail}` };
+      return {
+        code: failure.class,
+        message: `OpenAI rejected the API key. Check that it is correct, active and allowed for this project.${detail}`,
+      };
     case "quota_exhausted":
-      return { code: failure.class, message: `The OpenAI account has no available quota or has reached a spend limit.${detail}` };
+      return {
+        code: failure.class,
+        message: `The OpenAI account has no available quota or has reached a spend limit.${detail}`,
+      };
     case "permission_denied":
       return { code: failure.class, message: `OpenAI denied access for this key.${detail}` };
     case "model_unavailable":
       return { code: failure.class, message: `The model is not available to this key.${detail}` };
     case "rate_limited":
-      return { code: failure.class, message: "OpenAI is rate limiting this key right now. Try again in a moment." };
+      return {
+        code: failure.class,
+        message: "OpenAI is rate limiting this key right now. Try again in a moment.",
+      };
     case "timeout":
       return { code: failure.class, message: "OpenAI did not answer in time. Try again." };
     case "connection_error":
       return { code: failure.class, message: "Could not reach OpenAI. Try again." };
     case "server_error":
     case "provider_failed":
-      return { code: failure.class, message: `OpenAI reported a temporary error. Try again.${detail}` };
+      return {
+        code: failure.class,
+        message: `OpenAI reported a temporary error. Try again.${detail}`,
+      };
     default:
       return { code: failure.class, message: `OpenAI rejected the request.${detail}` };
   }
@@ -99,7 +126,10 @@ interface ConnectionRow {
   archived_at: string | null;
 }
 
-async function loadConnection(ctx: OpsContext, connectionId: unknown): Promise<ConnectionRow | null> {
+async function loadConnection(
+  ctx: OpsContext,
+  connectionId: unknown,
+): Promise<ConnectionRow | null> {
   if (!isUuid(connectionId)) return null;
   const { data } = await ctx.admin
     .from("provider_connections")
@@ -109,7 +139,10 @@ async function loadConnection(ctx: OpsContext, connectionId: unknown): Promise<C
   return (data as ConnectionRow | null) ?? null;
 }
 
-function adhocOutcome(outcome: ProviderOutcome, sentParams?: Record<string, unknown>): Record<string, unknown> {
+function adhocOutcome(
+  outcome: ProviderOutcome,
+  sentParams?: Record<string, unknown>,
+): Record<string, unknown> {
   const params = sentParams ? { request_params: sentParams } : {};
   if (outcome.kind === "result") {
     const { result } = outcome;
@@ -159,11 +192,15 @@ function adhocOutcome(outcome: ProviderOutcome, sentParams?: Record<string, unkn
 // ---------------------------------------------------------------------------------------------
 
 /** Tests a new API key, and only then stores it in Vault (replacing any previous key). */
-export async function setCredential(ctx: OpsContext, input: { connection_id?: unknown; api_key?: unknown }): Promise<OpsResult> {
+export async function setCredential(
+  ctx: OpsContext,
+  input: { connection_id?: unknown; api_key?: unknown },
+): Promise<OpsResult> {
   const connection = await loadConnection(ctx, input.connection_id);
   if (!connection || !allows(await roleIn(ctx, connection.workspace_id), "owner")) return NOT_FOUND;
   const apiKey = typeof input.api_key === "string" ? input.api_key.trim() : "";
-  if (apiKey.length < 20 || /\s/.test(apiKey)) return fail("invalid_api_key", "That does not look like an API key.");
+  if (apiKey.length < 20 || /\s/.test(apiKey))
+    return fail("invalid_api_key", "That does not look like an API key.");
 
   const listed = await ctx.createProvider(apiKey).listModels({ timeoutMs: 25_000 });
   if (!listed.ok) {
@@ -183,23 +220,33 @@ export async function setCredential(ctx: OpsContext, input: { connection_id?: un
     p_ok: true,
     p_actor: ctx.userId,
   });
-  await ctx.admin.rpc("svc_upsert_provider_models", { p_connection_id: connection.id, p_models: listed.models });
+  await ctx.admin.rpc("svc_upsert_provider_models", {
+    p_connection_id: connection.id,
+    p_models: listed.models,
+  });
   return { ok: true, models: listed.models.length };
 }
 
 /** Checks the stored key against the provider and refreshes the list of visible models. */
-export async function testConnection(ctx: OpsContext, input: { connection_id?: unknown }): Promise<OpsResult> {
+export async function testConnection(
+  ctx: OpsContext,
+  input: { connection_id?: unknown },
+): Promise<OpsResult> {
   const connection = await loadConnection(ctx, input.connection_id);
   if (!connection || !allows(await roleIn(ctx, connection.workspace_id), "admin")) return NOT_FOUND;
 
-  const { data: apiKey } = await ctx.admin.rpc("svc_get_connection_secret", { p_connection_id: connection.id });
+  const { data: apiKey } = await ctx.admin.rpc("svc_get_connection_secret", {
+    p_connection_id: connection.id,
+  });
   if (!apiKey) return fail("not_configured", "No API key is stored for this connection yet.");
 
   const listed = await ctx.createProvider(apiKey as string).listModels({ timeoutMs: 25_000 });
   if (!listed.ok) {
     const described = describeFailure(listed.failure);
     // Only definite answers about the key change the stored status; a network blip does not.
-    if (["invalid_credentials", "quota_exhausted", "permission_denied"].includes(listed.failure.class)) {
+    if (
+      ["invalid_credentials", "quota_exhausted", "permission_denied"].includes(listed.failure.class)
+    ) {
       await ctx.admin.rpc("svc_record_connection_status", {
         p_connection_id: connection.id,
         p_ok: false,
@@ -215,7 +262,10 @@ export async function testConnection(ctx: OpsContext, input: { connection_id?: u
     p_ok: true,
     p_actor: ctx.userId,
   });
-  await ctx.admin.rpc("svc_upsert_provider_models", { p_connection_id: connection.id, p_models: listed.models });
+  await ctx.admin.rpc("svc_upsert_provider_models", {
+    p_connection_id: connection.id,
+    p_models: listed.models,
+  });
   return { ok: true, models: listed.models.length };
 }
 
@@ -234,7 +284,10 @@ export async function verifyModel(
   const cap = Number(input.max_output_tokens);
   if (!modelId) return fail("invalid_model", "Choose a model to verify.");
   if (!Number.isInteger(cap) || cap < 16 || cap > 1_000_000) {
-    return fail("invalid_output_cap", "Enter the largest output cap to verify, between 16 and 1,000,000 tokens.");
+    return fail(
+      "invalid_output_cap",
+      "Enter the largest output cap to verify, between 16 and 1,000,000 tokens.",
+    );
   }
 
   const { data: listedModel } = await ctx.admin
@@ -244,7 +297,10 @@ export async function verifyModel(
     .eq("model_id", modelId)
     .maybeSingle();
   if (!listedModel || !listedModel.is_listed) {
-    return fail("model_not_listed", "This model is not in the list of models visible to the connection's key. Refresh the list and choose again.");
+    return fail(
+      "model_not_listed",
+      "This model is not in the list of models visible to the connection's key. Refresh the list and choose again.",
+    );
   }
 
   const plan = planProbe(cap);
@@ -261,15 +317,28 @@ export async function verifyModel(
     })),
   });
   if (begun.error) return fromDbError(begun.error);
-  const reservation = begun.data as { ok: boolean; code?: string; message?: string; attempt_ids?: string[] };
-  if (!reservation.ok) return fail(reservation.code ?? "blocked", reservation.message ?? "The request was blocked.");
+  const reservation = begun.data as {
+    ok: boolean;
+    code?: string;
+    message?: string;
+    attempt_ids?: string[];
+  };
+  if (!reservation.ok)
+    return fail(reservation.code ?? "blocked", reservation.message ?? "The request was blocked.");
 
-  const attemptByKey = new Map(plan.map((step, index) => [step.key, reservation.attempt_ids![index]!]));
+  const attemptByKey = new Map(
+    plan.map((step, index) => [step.key, reservation.attempt_ids![index]!]),
+  );
   const finish = async (key: string, outcome: Record<string, unknown>) => {
-    await ctx.admin.rpc("svc_finish_adhoc", { p_attempt_id: attemptByKey.get(key), p_outcome: outcome });
+    await ctx.admin.rpc("svc_finish_adhoc", {
+      p_attempt_id: attemptByKey.get(key),
+      p_outcome: outcome,
+    });
   };
 
-  const { data: apiKey } = await ctx.admin.rpc("svc_get_connection_secret", { p_connection_id: connection.id });
+  const { data: apiKey } = await ctx.admin.rpc("svc_get_connection_secret", {
+    p_connection_id: connection.id,
+  });
   if (!apiKey) {
     for (const step of plan) await finish(step.key, { status: "unused" });
     return fail("not_configured", "No API key is stored for this connection yet.");
@@ -324,7 +393,11 @@ async function workingRevision(ctx: OpsContext, campaignId: string): Promise<Rev
     .maybeSingle();
   const revisionId = campaign?.draft_revision_id ?? campaign?.active_revision_id;
   if (!revisionId) return null;
-  const { data } = await ctx.admin.from("campaign_revisions").select(REVISION_COLUMNS).eq("id", revisionId).maybeSingle();
+  const { data } = await ctx.admin
+    .from("campaign_revisions")
+    .select(REVISION_COLUMNS)
+    .eq("id", revisionId)
+    .maybeSingle();
   return (data as RevisionRow | null) ?? null;
 }
 
@@ -338,7 +411,11 @@ function targetOf(revision: RevisionRow): DetectionTarget | null {
   };
 }
 
-async function modelCapabilities(ctx: OpsContext, connectionId: string, model: string): Promise<CapabilityProfile | null> {
+async function modelCapabilities(
+  ctx: OpsContext,
+  connectionId: string,
+  model: string,
+): Promise<CapabilityProfile | null> {
   const { data } = await ctx.admin
     .from("provider_models")
     .select("capabilities, verification_status")
@@ -371,7 +448,8 @@ export async function generateVariations(
   if (!allows(await roleIn(ctx, workspaceId), "admin")) return NOT_FOUND;
 
   const kind = input.kind as TemplateKind;
-  if (!TEMPLATE_KINDS.includes(kind)) return fail("invalid_kind", "Choose which kind of prompt to generate.");
+  if (!TEMPLATE_KINDS.includes(kind))
+    return fail("invalid_kind", "Choose which kind of prompt to generate.");
   const count = Number(input.count);
   if (!Number.isInteger(count) || count < 1 || count > 50) {
     return fail("invalid_count", "Choose how many variations to generate, between 1 and 50.");
@@ -385,14 +463,23 @@ export async function generateVariations(
   }
 
   const connectionId = isUuid(input.connection_id) ? input.connection_id : revision?.connection_id;
-  const model = typeof input.model === "string" && input.model.trim() ? input.model.trim() : revision?.model;
-  if (!connectionId || !model) return fail("model_required", "Choose a connection and a verified model for generation.");
+  const model =
+    typeof input.model === "string" && input.model.trim() ? input.model.trim() : revision?.model;
+  if (!connectionId || !model)
+    return fail("model_required", "Choose a connection and a verified model for generation.");
   const connection = await loadConnection(ctx, connectionId);
   if (!connection || connection.workspace_id !== workspaceId) return NOT_FOUND;
   const capabilities = await modelCapabilities(ctx, connection.id, model);
-  if (!capabilities) return fail("model_not_verified", `Model "${model}" has not been verified for this connection.`);
+  if (!capabilities)
+    return fail(
+      "model_not_verified",
+      `Model "${model}" has not been verified for this connection.`,
+    );
 
-  const supplied = (input.values && typeof input.values === "object" ? input.values : {}) as Record<string, unknown>;
+  const supplied = (input.values && typeof input.values === "object" ? input.values : {}) as Record<
+    string,
+    unknown
+  >;
   const pick = (key: keyof TemplateValues) => {
     const value = supplied[key] ?? revision?.[key as keyof RevisionRow];
     return typeof value === "string" ? value : null;
@@ -403,7 +490,9 @@ export async function generateVariations(
     language: pick("language"),
   };
   const examples = Array.isArray(input.examples)
-    ? input.examples.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 20)
+    ? input.examples
+        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        .slice(0, 20)
     : [];
   const context = {
     kind,
@@ -413,8 +502,12 @@ export async function generateVariations(
     guidance: typeof input.guidance === "string" ? input.guidance.slice(0, 500) : null,
   };
 
-  const reasoning = capabilities.reasoning_efforts.length > 0 && capabilities.default_reasoning_effort !== "none";
-  const maxOutput = Math.min(generationOutputCap(count, reasoning), capabilities.max_output_tokens_limit ?? Infinity);
+  const reasoning =
+    capabilities.reasoning_efforts.length > 0 && capabilities.default_reasoning_effort !== "none";
+  const maxOutput = Math.min(
+    generationOutputCap(count, reasoning),
+    capabilities.max_output_tokens_limit ?? Infinity,
+  );
   const params: ModelParams = {};
   const request = buildGenerationRequest(context, model, params, maxOutput);
 
@@ -448,34 +541,59 @@ export async function generateVariations(
     p_generation_id: generationId,
   });
   if (begun.error) return fromDbError(begun.error);
-  const reservation = begun.data as { ok: boolean; code?: string; message?: string; attempt_ids?: string[] };
+  const reservation = begun.data as {
+    ok: boolean;
+    code?: string;
+    message?: string;
+    attempt_ids?: string[];
+  };
   if (!reservation.ok) {
-    await ctx.admin.rpc("svc_finish_generation", { p_generation_id: generationId, p_candidates: null, p_error: reservation.message });
+    await ctx.admin.rpc("svc_finish_generation", {
+      p_generation_id: generationId,
+      p_candidates: null,
+      p_error: reservation.message,
+    });
     return fail(reservation.code ?? "blocked", reservation.message ?? "The request was blocked.");
   }
   const attemptId = reservation.attempt_ids![0]!;
 
-  const { data: apiKey } = await ctx.admin.rpc("svc_get_connection_secret", { p_connection_id: connection.id });
+  const { data: apiKey } = await ctx.admin.rpc("svc_get_connection_secret", {
+    p_connection_id: connection.id,
+  });
   if (!apiKey) {
-    await ctx.admin.rpc("svc_finish_adhoc", { p_attempt_id: attemptId, p_outcome: { status: "unused" } });
+    await ctx.admin.rpc("svc_finish_adhoc", {
+      p_attempt_id: attemptId,
+      p_outcome: { status: "unused" },
+    });
     return fail("not_configured", "No API key is stored for this connection yet.");
   }
 
   const outcome = await ctx
     .createProvider(apiKey as string)
     .createResponse({ ...request, client_request_id: attemptId }, { timeoutMs: 100_000 });
-  await ctx.admin.rpc("svc_finish_adhoc", { p_attempt_id: attemptId, p_outcome: adhocOutcome(outcome) });
+  await ctx.admin.rpc("svc_finish_adhoc", {
+    p_attempt_id: attemptId,
+    p_outcome: adhocOutcome(outcome),
+  });
 
   if (outcome.kind !== "result") {
     const described =
       outcome.kind === "failure"
         ? describeFailure(outcome.failure)
         : { code: "timeout", message: "The provider did not finish the response." };
-    await ctx.admin.rpc("svc_finish_generation", { p_generation_id: generationId, p_candidates: null, p_error: described.message });
+    await ctx.admin.rpc("svc_finish_generation", {
+      p_generation_id: generationId,
+      p_candidates: null,
+      p_error: described.message,
+    });
     return { ok: false, ...described };
   }
 
-  const parsed = parseGeneration(outcome.result.output_text, context, revision ? targetOf(revision) : null);
+  const parsed = parseGeneration(
+    outcome.result.output_text,
+    context,
+    revision ? targetOf(revision) : null,
+  );
   const incomplete = outcome.result.status === "incomplete";
   await ctx.admin.rpc("svc_finish_generation", {
     p_generation_id: generationId,
@@ -509,7 +627,10 @@ export async function classifyWithModel(
   input: { subject_type?: unknown; subject_id?: unknown },
 ): Promise<OpsResult> {
   const subjectType = input.subject_type;
-  if (!isUuid(input.subject_id) || !["run_turn", "fresh_check", "manual_check"].includes(subjectType as string)) {
+  if (
+    !isUuid(input.subject_id) ||
+    !["run_turn", "fresh_check", "manual_check"].includes(subjectType as string)
+  ) {
     return NOT_FOUND;
   }
   const subjectId = input.subject_id;
@@ -529,7 +650,9 @@ export async function classifyWithModel(
       workspaceId = data.workspace_id;
       campaignId = data.campaign_id;
       text = data.status === "completed" ? data.output_text : null;
-      const run = (Array.isArray(data.runs) ? data.runs[0] : data.runs) as { target: DetectionTarget } | null;
+      const run = (Array.isArray(data.runs) ? data.runs[0] : data.runs) as {
+        target: DetectionTarget;
+      } | null;
       target = run?.target ?? null;
     }
   } else {
@@ -558,9 +681,14 @@ export async function classifyWithModel(
   target = target ?? targetOf(revision);
   if (!target) return fail("no_target", "The campaign has no business to look for.");
   const capabilities = await modelCapabilities(ctx, revision.connection_id, revision.model);
-  if (!capabilities) return fail("model_not_verified", `Model "${revision.model}" has not been verified for this connection.`);
+  if (!capabilities)
+    return fail(
+      "model_not_verified",
+      `Model "${revision.model}" has not been verified for this connection.`,
+    );
 
-  const reasoning = capabilities.reasoning_efforts.length > 0 && capabilities.default_reasoning_effort !== "none";
+  const reasoning =
+    capabilities.reasoning_efforts.length > 0 && capabilities.default_reasoning_effort !== "none";
   const maxOutput = reasoning ? 2000 : 300;
   const request = buildClassificationRequest(text, target, revision.model, {}, maxOutput);
 
@@ -580,19 +708,33 @@ export async function classifyWithModel(
     p_campaign_id: campaignId,
   });
   if (begun.error) return fromDbError(begun.error);
-  const reservation = begun.data as { ok: boolean; code?: string; message?: string; attempt_ids?: string[] };
-  if (!reservation.ok) return fail(reservation.code ?? "blocked", reservation.message ?? "The request was blocked.");
+  const reservation = begun.data as {
+    ok: boolean;
+    code?: string;
+    message?: string;
+    attempt_ids?: string[];
+  };
+  if (!reservation.ok)
+    return fail(reservation.code ?? "blocked", reservation.message ?? "The request was blocked.");
   const attemptId = reservation.attempt_ids![0]!;
 
-  const { data: apiKey } = await ctx.admin.rpc("svc_get_connection_secret", { p_connection_id: revision.connection_id });
+  const { data: apiKey } = await ctx.admin.rpc("svc_get_connection_secret", {
+    p_connection_id: revision.connection_id,
+  });
   if (!apiKey) {
-    await ctx.admin.rpc("svc_finish_adhoc", { p_attempt_id: attemptId, p_outcome: { status: "unused" } });
+    await ctx.admin.rpc("svc_finish_adhoc", {
+      p_attempt_id: attemptId,
+      p_outcome: { status: "unused" },
+    });
     return fail("not_configured", "No API key is stored for this connection yet.");
   }
   const outcome = await ctx
     .createProvider(apiKey as string)
     .createResponse({ ...request, client_request_id: attemptId }, { timeoutMs: 60_000 });
-  await ctx.admin.rpc("svc_finish_adhoc", { p_attempt_id: attemptId, p_outcome: adhocOutcome(outcome) });
+  await ctx.admin.rpc("svc_finish_adhoc", {
+    p_attempt_id: attemptId,
+    p_outcome: adhocOutcome(outcome),
+  });
 
   if (outcome.kind !== "result") {
     return outcome.kind === "failure"
@@ -600,7 +742,11 @@ export async function classifyWithModel(
       : fail("timeout", "The provider did not finish the response.");
   }
   const parsed = parseClassification(outcome.result.output_text);
-  if (!parsed) return fail("unreadable", "The model's answer could not be read as a classification. The response stays in review.");
+  if (!parsed)
+    return fail(
+      "unreadable",
+      "The model's answer could not be read as a classification. The response stays in review.",
+    );
 
   const saved = await ctx.admin.rpc("svc_record_model_classification", {
     p_actor: ctx.userId,
@@ -626,7 +772,8 @@ export async function inviteMember(
   if (!allows(await roleIn(ctx, input.workspace_id), "owner")) return NOT_FOUND;
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
   const role = input.role;
-  if (role !== "owner" && role !== "admin" && role !== "member") return fail("invalid_role", "Choose a role.");
+  if (role !== "owner" && role !== "admin" && role !== "member")
+    return fail("invalid_role", "Choose a role.");
 
   const recorded = await ctx.admin.rpc("svc_invite_member", {
     p_workspace_id: input.workspace_id,
@@ -642,7 +789,10 @@ export async function inviteMember(
     ...(ctx.siteUrl ? { redirectTo: `${ctx.siteUrl.replace(/\/$/, "")}/accept-invite` } : {}),
   });
   if (error) {
-    await ctx.admin.rpc("svc_cancel_invitation", { p_invitation_id: outcome.invitation_id, p_reason: error.message });
+    await ctx.admin.rpc("svc_cancel_invitation", {
+      p_invitation_id: outcome.invitation_id,
+      p_reason: error.message,
+    });
     return fail("invite_failed", `The invitation email could not be sent: ${error.message}`);
   }
   return { ok: true, outcome: "invited" };
@@ -663,8 +813,17 @@ export const OPS_ACTIONS = {
 
 export type OpsAction = keyof typeof OPS_ACTIONS;
 
-export async function runOpsAction(ctx: OpsContext, action: string, input: Record<string, unknown>): Promise<OpsResult> {
-  const handler = (OPS_ACTIONS as Record<string, (ctx: OpsContext, input: Record<string, unknown>) => Promise<OpsResult>>)[action];
+export async function runOpsAction(
+  ctx: OpsContext,
+  action: string,
+  input: Record<string, unknown>,
+): Promise<OpsResult> {
+  const handler = (
+    OPS_ACTIONS as Record<
+      string,
+      (ctx: OpsContext, input: Record<string, unknown>) => Promise<OpsResult>
+    >
+  )[action];
   if (!handler) return fail("unknown_action", "Unknown operation.");
   return handler(ctx, input);
 }

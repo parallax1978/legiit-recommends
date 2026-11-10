@@ -13,7 +13,9 @@ function stackEnv(): Record<string, string> {
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch {
-    throw new Error("The local Supabase stack is not running. Start it with `npm run db:start` and apply migrations with `npm run db:reset`.");
+    throw new Error(
+      "The local Supabase stack is not running. Start it with `npm run db:start` and apply migrations with `npm run db:reset`.",
+    );
   }
   const values: Record<string, string> = {};
   for (const line of output.split("\n")) {
@@ -27,7 +29,8 @@ export default async function setup(): Promise<() => Promise<void>> {
   const values = stackEnv();
   const apiUrl = process.env.LR_TEST_API_URL ?? values.API_URL;
   const dbUrl = process.env.LR_TEST_DB_URL ?? values.DB_URL;
-  const publishable = process.env.LR_TEST_PUBLISHABLE_KEY ?? values.PUBLISHABLE_KEY ?? values.ANON_KEY;
+  const publishable =
+    process.env.LR_TEST_PUBLISHABLE_KEY ?? values.PUBLISHABLE_KEY ?? values.ANON_KEY;
   const secret = process.env.LR_TEST_SECRET_KEY ?? values.SECRET_KEY ?? values.SERVICE_ROLE_KEY;
   if (!apiUrl || !dbUrl || !publishable || !secret) {
     throw new Error("Could not read the local stack's URL and keys from `supabase status`.");
@@ -42,19 +45,26 @@ export default async function setup(): Promise<() => Promise<void>> {
   const previous = await client.query<{ jobname: string; active: boolean }>(
     "select jobname, active from cron.job where jobname like 'lr-%'",
   );
-  await client.query("select cron.alter_job(jobid, active := false) from cron.job where jobname like 'lr-%'");
+  await client.query(
+    "select cron.alter_job(jobid, active := false) from cron.job where jobname like 'lr-%'",
+  );
   // No HTTP wake-ups: the in-process worker is the only consumer during these tests.
   const consumers = await client.query<{ name: string; secret: string }>(
     "select name, decrypted_secret as secret from vault.decrypted_secrets where name in ('lr_functions_base_url', 'lr_worker_secret')",
   );
-  await client.query("delete from vault.secrets where name in ('lr_functions_base_url', 'lr_worker_secret')");
+  await client.query(
+    "delete from vault.secrets where name in ('lr_functions_base_url', 'lr_worker_secret')",
+  );
   await client.end();
 
   return async () => {
     const restore = new pg.Client({ connectionString: dbUrl });
     await restore.connect();
     for (const job of previous.rows) {
-      await restore.query("select cron.alter_job(jobid, active := $2) from cron.job where jobname = $1", [job.jobname, job.active]);
+      await restore.query(
+        "select cron.alter_job(jobid, active := $2) from cron.job where jobname = $1",
+        [job.jobname, job.active],
+      );
     }
     const url = consumers.rows.find((row) => row.name === "lr_functions_base_url")?.secret;
     const workerSecret = consumers.rows.find((row) => row.name === "lr_worker_secret")?.secret;

@@ -76,8 +76,16 @@ describe("slot planning", () => {
 
   it("keeps local hours across daylight-saving changes", async () => {
     // Clocks go forward on 2027-03-14 in New York: 09:00 local moves from 14:00Z to 13:00Z.
-    const before = await daySlots({ ...baseRevision, active_weekdays: [1, 2, 3, 4, 5, 6, 7] }, "2027-03-13", 2);
-    const after = await daySlots({ ...baseRevision, active_weekdays: [1, 2, 3, 4, 5, 6, 7] }, "2027-03-14", 2);
+    const before = await daySlots(
+      { ...baseRevision, active_weekdays: [1, 2, 3, 4, 5, 6, 7] },
+      "2027-03-13",
+      2,
+    );
+    const after = await daySlots(
+      { ...baseRevision, active_weekdays: [1, 2, 3, 4, 5, 6, 7] },
+      "2027-03-14",
+      2,
+    );
     expect(new Date(before[0]!.slot_at).toISOString()).toBe("2027-03-13T14:00:00.000Z");
     expect(new Date(after[0]!.slot_at).toISOString()).toBe("2027-03-14T13:00:00.000Z");
     expect(after.map((s) => s.local)).toEqual(["2027-03-14 09:00:00", "2027-03-14 13:00:00"]);
@@ -106,7 +114,12 @@ describe("slot planning", () => {
     expect(new Date(slots[0]!.slot_at).toISOString()).toBe("2026-11-13T06:00:00.000Z");
 
     // Far-east timezone: the local day starts the previous UTC day.
-    const tokyo = { ...revision, timezone: "Asia/Tokyo", active_start_minute: 0, active_end_minute: 120 };
+    const tokyo = {
+      ...revision,
+      timezone: "Asia/Tokyo",
+      active_start_minute: 0,
+      active_end_minute: 120,
+    };
     const early = await daySlots(tokyo, "2026-11-12", 2);
     expect(new Date(early[0]!.slot_at).toISOString()).toBe("2026-11-11T15:00:00.000Z");
   });
@@ -151,10 +164,12 @@ describe("scheduler idempotency", () => {
     await launch(workspace, campaign);
 
     const count = async () =>
-      (await sql<{ jobs: string; slots: string }>(
-        "select count(*) as jobs, count(distinct (slot_date, slot_index)) as slots from public.jobs where campaign_id = $1 and kind = 'conversation'",
-        [campaign.id],
-      ))[0]!;
+      (
+        await sql<{ jobs: string; slots: string }>(
+          "select count(*) as jobs, count(distinct (slot_date, slot_index)) as slots from public.jobs where campaign_id = $1 and kind = 'conversation'",
+          [campaign.id],
+        )
+      )[0]!;
     const initial = await count();
     expect(Number(initial.jobs)).toBeGreaterThan(40);
     expect(initial.jobs).toBe(initial.slots);
@@ -197,7 +212,9 @@ describe("scheduler idempotency", () => {
     const at = new Date(slot!.scheduled_for);
     await Promise.all(Array.from({ length: 10 }, () => tick(at)));
 
-    expect(await sql("select 1 from public.runs where campaign_id = $1", [campaign.id])).toHaveLength(1);
+    expect(
+      await sql("select 1 from public.runs where campaign_id = $1", [campaign.id]),
+    ).toHaveLength(1);
     expect(await sql("select 1 from pgmq.q_lr_work")).toHaveLength(1);
     await drain(fake);
     expect(fake.responseRequests()).toHaveLength(3);
@@ -244,15 +261,26 @@ describe("scheduler idempotency", () => {
     // Having reached its limit with everything resolved, the campaign moves on by itself.
     await tick(new Date(new Date(planned[4]!.scheduled_for).getTime() + 120_000));
     expect(["finalizing", "completed"]).toContain(await campaignStatus(campaign.id));
-    const [more] = await sql<{ n: string }>("select count(*) as n from public.jobs where campaign_id = $1 and kind = 'conversation'", [campaign.id]);
+    const [more] = await sql<{ n: string }>(
+      "select count(*) as n from public.jobs where campaign_id = $1 and kind = 'conversation'",
+      [campaign.id],
+    );
     expect(Number(more!.n)).toBe(5);
   });
 
   it("bounds simultaneous provider requests across campaigns that share a connection", async () => {
     const workspace = await createWorkspace();
     const connection = await createConnection(workspace, fake, { maxConcurrent: 1 });
-    const first = await createCampaign(workspace, connection, { name: "First", questions: null, config: { max_concurrency: 1 } });
-    const second = await createCampaign(workspace, connection, { name: "Second", questions: null, config: { max_concurrency: 1 } });
+    const first = await createCampaign(workspace, connection, {
+      name: "First",
+      questions: null,
+      config: { max_concurrency: 1 },
+    });
+    const second = await createCampaign(workspace, connection, {
+      name: "Second",
+      questions: null,
+      config: { max_concurrency: 1 },
+    });
     fake.reset();
     await launch(workspace, first);
     await launch(workspace, second);
@@ -265,11 +293,15 @@ describe("scheduler idempotency", () => {
 
     // While one request is in flight, a second worker is told to wait instead of sending.
     let second_outcome: unknown;
-    const outcome = await work(fake, {}, {
-      afterBeginAttempt: async () => {
-        second_outcome = await work(fake);
+    const outcome = await work(
+      fake,
+      {},
+      {
+        afterBeginAttempt: async () => {
+          second_outcome = await work(fake);
+        },
       },
-    });
+    );
     expect(outcome).toMatchObject({ status: "processed" });
     expect(second_outcome).toMatchObject({ result: "gate:deferred:connection_busy" });
     const deferred = await sql<{ status: string; status_reason: string }>(
@@ -277,7 +309,12 @@ describe("scheduler idempotency", () => {
     );
     expect(deferred).toEqual([{ status: "waiting", status_reason: "connection_busy" }]);
     // The deferral is not a provider attempt.
-    expect(await sql("select 1 from public.provider_attempts where campaign_id in ($1, $2)", [first.id, second.id])).toHaveLength(1);
+    expect(
+      await sql("select 1 from public.provider_attempts where campaign_id in ($1, $2)", [
+        first.id,
+        second.id,
+      ]),
+    ).toHaveLength(1);
   });
 
   it("enforces request-per-minute caps for the connection and for the campaign", async () => {
@@ -309,7 +346,10 @@ describe("scheduler idempotency", () => {
     expect(fake.responseRequests()).toHaveLength(1);
 
     // Connection-level cap behaves the same way.
-    await rpc(workspace.owner.client, "update_connection", { p_connection_id: connection.id, p_patch: { requests_per_minute: 1 } });
+    await rpc(workspace.owner.client, "update_connection", {
+      p_connection_id: connection.id,
+      p_patch: { requests_per_minute: 1 },
+    });
     await sql("update pgmq.q_lr_work set vt = now() - interval '1 second'");
     expect(await work(fake)).toMatchObject({ result: "gate:deferred:connection_rate_cap" });
   });
@@ -343,10 +383,14 @@ describe("missed slots", () => {
       [campaign.id],
     );
     // Four slots were missed; the one a minute ago is still on time (within the grace period).
-    expect(states.slice(0, 4).every((s) => s.status === "skipped" && s.status_reason === "missed_slot")).toBe(true);
+    expect(
+      states.slice(0, 4).every((s) => s.status === "skipped" && s.status_reason === "missed_slot"),
+    ).toBe(true);
     expect(states[4]!.status).toBe("queued");
     expect(states[5]!.status).toBe("pending");
-    expect(await sql("select 1 from public.runs where campaign_id = $1", [campaign.id])).toHaveLength(1);
+    expect(
+      await sql("select 1 from public.runs where campaign_id = $1", [campaign.id]),
+    ).toHaveLength(1);
   });
 
   it("catches up only within the configured delay and daily bound", async () => {
@@ -358,31 +402,59 @@ describe("missed slots", () => {
     const resumeAt = new Date(new Date(slots[4]!.scheduled_for).getTime() + 60_000);
     await tick(resumeAt);
 
-    const states = await sql<{ status: string; status_reason: string | null; is_catch_up: boolean }>(
+    const states = await sql<{
+      status: string;
+      status_reason: string | null;
+      is_catch_up: boolean;
+    }>(
       "select status, status_reason, is_catch_up from public.jobs where campaign_id = $1 and kind = 'conversation' order by scheduled_for limit 6",
       [campaign.id],
     );
     // Slots 0 and 1 are more than 150 minutes late: skipped. Slots 2 and 3 are within the delay,
     // but only one catch-up per day is allowed. Slot 4 is simply on time.
-    expect(states.map((s) => s.status)).toEqual(["skipped", "skipped", "queued", "skipped", "queued", "pending"]);
+    expect(states.map((s) => s.status)).toEqual([
+      "skipped",
+      "skipped",
+      "queued",
+      "skipped",
+      "queued",
+      "pending",
+    ]);
     expect(states.map((s) => s.is_catch_up)).toEqual([false, false, true, false, false, false]);
-    expect(await sql("select 1 from public.runs where campaign_id = $1", [campaign.id])).toHaveLength(2);
+    expect(
+      await sql("select 1 from public.runs where campaign_id = $1", [campaign.id]),
+    ).toHaveLength(2);
   });
 
   it("applies the missed-slot setting to slots that passed while paused", async () => {
-    const { workspace, campaign, slots } = await campaignWithMissedSlots({ missed_slot_behavior: "skip" });
+    const { workspace, campaign, slots } = await campaignWithMissedSlots({
+      missed_slot_behavior: "skip",
+    });
     await rpc(workspace.owner.client, "pause_campaign", { p_campaign_id: campaign.id });
     // Time passes while paused: nothing is dispatched or skipped yet.
     await tick(new Date(new Date(slots[2]!.scheduled_for).getTime() + 60_000));
-    expect(await sql("select 1 from public.jobs where campaign_id = $1 and status <> 'pending'", [campaign.id])).toHaveLength(0);
+    expect(
+      await sql("select 1 from public.jobs where campaign_id = $1 and status <> 'pending'", [
+        campaign.id,
+      ]),
+    ).toHaveLength(0);
 
-    await sql("update public.campaigns set status = 'running', paused_from = null, pause_reason = null where id = $1", [campaign.id]);
+    await sql(
+      "update public.campaigns set status = 'running', paused_from = null, pause_reason = null where id = $1",
+      [campaign.id],
+    );
     await tick(new Date(new Date(slots[3]!.scheduled_for).getTime() + 60_000));
     const states = await sql<{ status: string }>(
       "select status from public.jobs where campaign_id = $1 and kind = 'conversation' order by scheduled_for limit 5",
       [campaign.id],
     );
-    expect(states.map((s) => s.status)).toEqual(["skipped", "skipped", "skipped", "queued", "pending"]);
+    expect(states.map((s) => s.status)).toEqual([
+      "skipped",
+      "skipped",
+      "skipped",
+      "queued",
+      "pending",
+    ]);
   });
 });
 
@@ -402,7 +474,9 @@ describe("campaign window", () => {
     await tick();
     await tick(new Date(start.getTime() - 60_000));
     expect(await campaignStatus(campaign.id)).toBe("scheduled");
-    expect(await sql("select 1 from public.jobs where campaign_id = $1", [campaign.id])).toHaveLength(0);
+    expect(
+      await sql("select 1 from public.jobs where campaign_id = $1", [campaign.id]),
+    ).toHaveLength(0);
     expect(fake.requests).toHaveLength(0);
 
     await tick(new Date(start.getTime() + 1000));
@@ -452,10 +526,20 @@ describe("campaign window", () => {
     expect(preview.provider_requests).toBe(13 * 3 + 2 + 3 + 2);
 
     // Execute the same window with the real planner and compare.
-    await sql("update public.campaign_revisions set baseline_samples = 0 where id = $1", [campaign.revisionId]);
-    const check = await rpc<{ revision_id: string }>(workspace.owner.client, "campaign_launch_check", { p_campaign_id: campaign.id });
-    await rpc(workspace.owner.client, "launch_campaign", { p_campaign_id: campaign.id, p_expected_revision_id: check.revision_id });
-    for (let hours = 0; hours <= 48; hours += 12) await tick(new Date(start.getTime() + hours * 3600_000 + 1000));
+    await sql("update public.campaign_revisions set baseline_samples = 0 where id = $1", [
+      campaign.revisionId,
+    ]);
+    const check = await rpc<{ revision_id: string }>(
+      workspace.owner.client,
+      "campaign_launch_check",
+      { p_campaign_id: campaign.id },
+    );
+    await rpc(workspace.owner.client, "launch_campaign", {
+      p_campaign_id: campaign.id,
+      p_expected_revision_id: check.revision_id,
+    });
+    for (let hours = 0; hours <= 48; hours += 12)
+      await tick(new Date(start.getTime() + hours * 3600_000 + 1000));
     const actual = await sql<{ day: string; conversations: string; checks: string }>(
       `select slot_date::text as day,
               count(*) filter (where kind = 'conversation') as conversations,
@@ -463,8 +547,17 @@ describe("campaign window", () => {
        from public.jobs where campaign_id = $1 group by slot_date order by slot_date`,
       [campaign.id],
     );
-    expect(actual.map((row) => ({ date: row.day, conversations: Number(row.conversations), checks: Number(row.checks) }))).toEqual(preview.days);
-    const [last] = await sql<{ last: Date }>("select max(scheduled_for) as last from public.jobs where campaign_id = $1", [campaign.id]);
+    expect(
+      actual.map((row) => ({
+        date: row.day,
+        conversations: Number(row.conversations),
+        checks: Number(row.checks),
+      })),
+    ).toEqual(preview.days);
+    const [last] = await sql<{ last: Date }>(
+      "select max(scheduled_for) as last from public.jobs where campaign_id = $1",
+      [campaign.id],
+    );
     expect(new Date(last!.last).getTime()).toBeLessThan(end.getTime());
   });
 });

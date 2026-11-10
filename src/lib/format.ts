@@ -109,6 +109,21 @@ export function formatDate(
   }).format(date);
 }
 
+/** Time of day only, e.g. "3:33 AM", in the given timezone. */
+export function formatClock(
+  value: string | Date | null | undefined,
+  timeZone?: string | null,
+): string {
+  if (!value) return NO_VALUE;
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return NO_VALUE;
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: timeZone ?? "UTC",
+  }).format(date);
+}
+
 export function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return NO_VALUE;
   if (ms < 1000) return `${ms} ms`;

@@ -80,7 +80,8 @@ function compose(indices: number[], counts: number[]): bigint {
 
 export function selectCombination(input: SelectionInput): SelectionResult {
   const { mode, seed, ordinal, counts } = input;
-  if (!Number.isInteger(ordinal) || ordinal < 0) throw new Error("ordinal must be a non-negative integer");
+  if (!Number.isInteger(ordinal) || ordinal < 0)
+    throw new Error("ordinal must be a non-negative integer");
   if (counts.length === 0 || counts.some((count) => !Number.isInteger(count) || count < 1)) {
     throw new Error("every step needs at least one wording");
   }
@@ -91,7 +92,12 @@ export function selectCombination(input: SelectionInput): SelectionResult {
     const indices = counts.map((count, step) =>
       Number(hash64(`${seed}:random:${ordinal}:${step}`) % BigInt(count)),
     );
-    return { indices, combinationIndex: compose(indices, counts), totalCombinations: total, cycle: n / total };
+    return {
+      indices,
+      combinationIndex: compose(indices, counts),
+      totalCombinations: total,
+      cycle: n / total,
+    };
   }
 
   // Balanced: an affine walk (multiplier * n + offset) mod total. The multiplier is coprime with

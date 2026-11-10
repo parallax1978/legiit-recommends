@@ -2,7 +2,7 @@
   "name": "legiit-recommends",
   "version": "1.0.0",
   "private": true,
-  "description": "Legiit Recommends — repeatable OpenAI conversation campaigns with independent fresh-check measurement.",
+  "description": "Legiit Recommends \u2014 repeatable OpenAI conversation campaigns with independent fresh-check measurement.",
   "engines": {
     "node": ">=22.0.0"
   },
@@ -13,7 +13,7 @@
     "lint": "eslint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "typecheck:functions": "deno check --config supabase/functions/deno.json supabase/functions/worker/index.ts supabase/functions/ops/index.ts",
     "test": "vitest run --project unit",
     "test:unit": "vitest run --project unit",
@@ -26,7 +26,8 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "db:lint": "supabase db lint --level warning",
-    "db:types": "supabase gen types typescript --local --schema public > src/lib/supabase/database.types.ts && prettier --write src/lib/supabase/database.types.ts",
+    "db:types": "supabase gen types --lang typescript --schema public > src/lib/supabase/database.types.ts && prettier --write src/lib/supabase/database.types.ts",
+    "env:local": "bash scripts/local-env.sh",
     "functions:serve": "supabase functions serve --env-file supabase/functions/.env",
     "bootstrap:owner": "tsx scripts/bootstrap-owner.ts",
     "queues:activate": "tsx scripts/activate-queues.ts",

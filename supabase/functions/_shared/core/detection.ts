@@ -125,7 +125,10 @@ function alnumLength(term: string): number {
 function buildNamePattern(normalizedTerm: string): RegExp | null {
   if (alnumLength(normalizedTerm) < 2) return null;
   // Words of the term may be joined by spaces, hyphens, or nothing ("Legiit Leads" ~ "LegiitLeads").
-  const words = normalizedTerm.split(/[\s-]+/).filter(Boolean).map(escapeRegExp);
+  const words = normalizedTerm
+    .split(/[\s-]+/)
+    .filter(Boolean)
+    .map(escapeRegExp);
   if (words.length === 0) return null;
   const body = words.join("[\\s-]*");
   const first = normalizedTerm[0] ?? "";
@@ -223,7 +226,13 @@ function findUrlCandidates(text: string): UrlCandidate[] {
     const rawHost = candidate.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[/?#:]/)[0] ?? "";
     const tld = rawHost.split(".").pop() ?? "";
     const urlLike = hasScheme || tld === tld.toLowerCase() || rawHost === rawHost.toUpperCase();
-    candidates.push({ start: match.index, end: match.index + candidate.length, text: candidate, host, urlLike });
+    candidates.push({
+      start: match.index,
+      end: match.index + candidate.length,
+      text: candidate,
+      host,
+      urlLike,
+    });
   }
   return candidates;
 }
@@ -236,7 +245,13 @@ function findDomainMatches(
   for (const candidate of candidates) {
     const hit = domains.find((domain) => hostMatches(candidate.host, domain.host));
     if (!hit) continue;
-    spans.push({ start: candidate.start, end: candidate.end, text: candidate.text, kind: hit.kind, term: hit.term });
+    spans.push({
+      start: candidate.start,
+      end: candidate.end,
+      text: candidate.text,
+      kind: hit.kind,
+      term: hit.term,
+    });
   }
   return spans;
 }
@@ -356,7 +371,8 @@ interface Marker {
 }
 
 // "1." "1)" "1 -" "#1:" and the same wrapped in emphasis: "**1.**" or "**1. Name**".
-const NUMBERED_MARKER = /^(?:>\s*)*([*_]{1,3})?#?(\d{1,3})(?:[.)]|\s*[-\u2013\u2014:])([*_]{1,3})?\s+/u;
+const NUMBERED_MARKER =
+  /^(?:>\s*)*([*_]{1,3})?#?(\d{1,3})(?:[.)]|\s*[-\u2013\u2014:])([*_]{1,3})?\s+/u;
 const BULLET_MARKER = /^(?:>\s*)*[-*+\u2022\u25E6\u25AA\u2013\u2014]\s+/u;
 const HEADING_MARKER = /^(#{1,6})\s+/u;
 const TABLE_ROW = /^\|(.+)\|\s*$/u;
@@ -398,15 +414,22 @@ function detectMarker(line: ParsedLine, inTableBody: boolean): Marker | null {
     const level = heading[1]!.length;
     const numbered = numberedMarker(trimmed.slice(heading[0].length));
     if (numbered) {
-      return { kind: "numbered", number: numbered.number, length: heading[0].length + numbered.length, level };
+      return {
+        kind: "numbered",
+        number: numbered.number,
+        length: heading[0].length + numbered.length,
+        level,
+      };
     }
     return { kind: "heading", number: null, length: heading[0].length, level };
   }
   const numbered = numberedMarker(trimmed);
-  if (numbered) return { kind: "numbered", number: numbered.number, length: numbered.length, level: 0 };
+  if (numbered)
+    return { kind: "numbered", number: numbered.number, length: numbered.length, level: 0 };
   const bullet = BULLET_MARKER.exec(trimmed);
   if (bullet) return { kind: "bulleted", number: null, length: bullet[0].length, level: 0 };
-  if (inTableBody && TABLE_ROW.test(trimmed)) return { kind: "table", number: null, length: 1, level: 0 };
+  if (inTableBody && TABLE_ROW.test(trimmed))
+    return { kind: "table", number: null, length: 1, level: 0 };
   return null;
 }
 
@@ -547,7 +570,8 @@ function parseItems(text: string): Item[] {
         const line = lines[j]!;
         const isHeading = marker !== null && marker !== undefined && marker.level > 0;
         const endsSection = isHeading && (item.level === 0 || marker!.level <= item.level);
-        const shallowerItem = !!marker && marker.level === 0 && item.indent >= 0 && line.indent < item.indent;
+        const shallowerItem =
+          !!marker && marker.level === 0 && item.indent >= 0 && line.indent < item.indent;
         const newParagraph = paragraphStart[j] && line.indent <= Math.max(item.indent, 0);
         if (endsSection || shallowerItem || newParagraph) {
           endLine = j;
@@ -569,8 +593,29 @@ function parseItems(text: string): Item[] {
 
 // Words that may precede the name at the start of an item without changing who the item is about.
 const LEAD_IN_WORDS = new Set([
-  "the", "a", "an", "try", "visit", "use", "using", "check", "consider", "see", "and", "also",
-  "plus", "or", "our", "your", "my", "new", "official", "added", "add", "including", "include",
+  "the",
+  "a",
+  "an",
+  "try",
+  "visit",
+  "use",
+  "using",
+  "check",
+  "consider",
+  "see",
+  "and",
+  "also",
+  "plus",
+  "or",
+  "our",
+  "your",
+  "my",
+  "new",
+  "official",
+  "added",
+  "add",
+  "including",
+  "include",
 ]);
 
 // A first segment like "Best overall" or "Top pick" labels the item; the name follows the colon.
@@ -643,14 +688,19 @@ function judgeItem(text: string, item: Item, span: MatchSpan): Judgement {
   if (index < 0) index = segments.length - 1;
   const segment = segments[index]!;
   const prefix = firstLine.slice(segment.start, offset);
-  const after = wordsOf(firstLine.slice(Math.min(span.end - item.contentStart, segment.end), segment.end)).length;
+  const after = wordsOf(
+    firstLine.slice(Math.min(span.end - item.contentStart, segment.end), segment.end),
+  ).length;
   const anchored = isAnchored(prefix);
 
   if (index === 0) {
     return { verdict: anchored ? "subject" : "unclear", nameOnly: anchored && after <= 1 };
   }
   // A later segment still names the item when it follows a label ("Best overall: Legiit").
-  const firstSegment = firstLine.slice(segments[0]!.start, segments[0]!.end).replace(/[*_`#]/g, "").trim();
+  const firstSegment = firstLine
+    .slice(segments[0]!.start, segments[0]!.end)
+    .replace(/[*_`#]/g, "")
+    .trim();
   if (index === 1 && anchored && LABEL_SEGMENT.test(firstSegment)) {
     return { verdict: "subject", nameOnly: after <= 1 };
   }

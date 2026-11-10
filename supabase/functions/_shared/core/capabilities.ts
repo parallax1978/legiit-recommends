@@ -3,7 +3,15 @@
 // Nothing here is assumed from a model's name: the profile is built from real requests made with
 // the workspace's own key, and the campaign form only offers what the profile says is supported.
 
-export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const REASONING_EFFORTS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export const VERBOSITY_LEVELS = ["low", "medium", "high"] as const;
@@ -71,15 +79,20 @@ export function paramsProblem(
     }
     const value = p[key];
     if (typeof value !== "number" || Number.isNaN(value)) return `${key} must be a number.`;
-    if (key === "temperature" && (value < 0 || value > 2)) return "temperature must be between 0 and 2.";
-    if (key === "top_p" && (value <= 0 || value > 1)) return "top_p must be greater than 0 and at most 1.";
+    if (key === "temperature" && (value < 0 || value > 2))
+      return "temperature must be between 0 and 2.";
+    if (key === "top_p" && (value <= 0 || value > 1))
+      return "top_p must be greater than 0 and at most 1.";
   }
   if (p.verbosity != null && !capabilities.verbosity.includes(p.verbosity as Verbosity)) {
     return `This model does not accept verbosity "${String(p.verbosity)}".`;
   }
   if (maxOutputTokens != null) {
     if (maxOutputTokens < 16) return "Maximum output tokens must be at least 16.";
-    if (capabilities.max_output_tokens_limit != null && maxOutputTokens > capabilities.max_output_tokens_limit) {
+    if (
+      capabilities.max_output_tokens_limit != null &&
+      maxOutputTokens > capabilities.max_output_tokens_limit
+    ) {
       return `Maximum output tokens cannot exceed ${capabilities.max_output_tokens_limit} for this model.`;
     }
     if (maxOutputTokens > capabilities.max_output_tokens_verified) {
@@ -102,7 +115,7 @@ export function paramsProblem(
  * "auto" uses background mode when the model is asked to think hard, when the output cap is
  * large, or when a previous synchronous attempt at the same unit ran out of time.
  */
-export function useBackgroundMode(input: {
+export function shouldRunInBackground(input: {
   mode: ExecutionMode;
   params: ModelParams | null | undefined;
   maxOutputTokens: number;

@@ -43,6 +43,7 @@ export const stack = {
 };
 
 // deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped service-role client
 export type Client = SupabaseClient<any, any, any>;
 
 let pool: pg.Pool | null = null;

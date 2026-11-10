@@ -26,9 +26,14 @@ export interface CsvColumn<Row> {
 }
 
 /** RFC 4180 output with CRLF line endings and a UTF-8 byte-order mark for spreadsheet apps. */
-export function toCsv<Row>(rows: Row[], columns: CsvColumn<Row>[], options: { bom?: boolean } = {}): string {
+export function toCsv<Row>(
+  rows: Row[],
+  columns: CsvColumn<Row>[],
+  options: { bom?: boolean } = {},
+): string {
   const lines = [columns.map((column) => formatCell(column.header)).join(",")];
-  for (const row of rows) lines.push(columns.map((column) => formatCell(column.value(row))).join(","));
+  for (const row of rows)
+    lines.push(columns.map((column) => formatCell(column.value(row))).join(","));
   return (options.bom === false ? "" : "\uFEFF") + lines.join("\r\n") + "\r\n";
 }
 
@@ -91,7 +96,9 @@ export function parsePromptCsv(text: string): ImportedPrompt[] {
   const rows = parseCsv(text);
   if (rows.length === 0) return [];
   const header = rows[0]!.map((cell) => cell.trim().toLowerCase());
-  const bodyIndex = header.findIndex((cell) => ["body", "prompt", "template", "text", "question"].includes(cell));
+  const bodyIndex = header.findIndex((cell) =>
+    ["body", "prompt", "template", "text", "question"].includes(cell),
+  );
   const labelIndex = header.findIndex((cell) => cell === "label" || cell === "name");
   const hasHeader = bodyIndex >= 0;
   const data = hasHeader ? rows.slice(1) : rows;
