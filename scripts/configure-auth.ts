@@ -19,6 +19,11 @@
  *     Auth server with a redirect chosen by whoever requested the email, and the web app's
  *     address is written into them rather than taken from the Site URL setting.
  *
+ *   - The length of the one-time code behind every email link (10 digits).
+ *
+ * It also checks, without changing it, that the Data API returns at least 1000 rows per request
+ * ("Max rows", the default): the web app pages its long lists by that number.
+ *
  * It deliberately does not push supabase/config.toml as a whole: that file carries local
  * development defaults (email throttling, MFA, pooler and storage settings) that would change a
  * production project in ways nobody asked for.
@@ -38,6 +43,7 @@ import {
   type EmailTemplate,
   type EmailTemplateName,
 } from "./lib/auth-settings";
+import { maxRowsProblem } from "./lib/data-api";
 import { fail, loadEnvFiles, parseArgs, requireEnv } from "./lib/env";
 import { managementClient } from "./lib/management";
 
@@ -61,6 +67,15 @@ async function main() {
   }
 
   const api = managementClient();
+  // Checked first and never changed. Only this one field is read: the same resource also
+  // carries secrets, which are neither kept nor printed.
+  const dataApi = await api.request<{ max_rows?: unknown }>("GET", "/postgrest");
+  const rowLimitProblem = maxRowsProblem(dataApi?.max_rows);
+  if (rowLimitProblem) fail(rowLimitProblem);
+  console.log(
+    `\nData API of project ${api.ref}: Max rows ${String(dataApi.max_rows)}, as required.`,
+  );
+
   const current = await api.request<AuthConfig>("GET", "/config/auth");
   let desired: AuthConfig;
   try {
@@ -68,6 +83,7 @@ async function main() {
       siteUrl,
       minimumPasswordLength: declared.minimumPasswordLength,
       linkLifetimeSeconds: declared.linkLifetimeSeconds,
+      oneTimeCodeLength: declared.oneTimeCodeLength,
       templates,
     });
   } catch (error) {

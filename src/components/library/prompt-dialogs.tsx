@@ -28,10 +28,14 @@ import {
   updateTemplate,
   type GenerationResult,
 } from "@/lib/actions/library";
+import { actionFailure, toastFailure } from "@/lib/action-failure";
 import { templateKind } from "@/lib/labels";
 import type { ActionResult } from "@/lib/result";
 import { templateProblem, type TemplateKind } from "@shared/core/templates.ts";
 import { PromptEditor } from "./prompt-fields";
+
+/** Largest CSV the import accepts. The server action's request limit (next.config.ts) is 3 MB. */
+const IMPORT_MAX_BYTES = 2_000_000;
 
 function useAction() {
   const router = useRouter();
@@ -44,18 +48,15 @@ function useAction() {
       let result: ActionResult<T>;
       try {
         result = await action();
-      } catch {
-        result = {
-          ok: false,
-          message: "The request could not be completed. Check your connection and try again.",
-        };
+      } catch (error) {
+        result = actionFailure(error);
       }
       if (result.ok) {
         if (result.message) toast.success(result.message);
         onOk?.(result);
         router.refresh();
       } else {
-        toast.error(result.message);
+        toastFailure(result);
       }
     });
   };
@@ -414,12 +415,18 @@ export function ImportCsvButton({
             <Button
               disabled={pending || !text.trim()}
               aria-busy={pending}
-              onClick={() =>
+              onClick={() => {
+                // Measured in bytes, as the request will be: pasted text can be far larger
+                // than its character count suggests.
+                if (new Blob([text]).size > IMPORT_MAX_BYTES) {
+                  toast.error("The text is larger than 2 MB. Split it into smaller files.");
+                  return;
+                }
                 run(
-                  () => parsePromptImport(kind, text),
+                  () => parsePromptImport({ kind, csvText: text }),
                   (result) => setRows(result.data ?? []),
-                )
-              }
+                );
+              }}
             >
               <Spinner show={pending} />
               Review rows
@@ -498,8 +505,8 @@ export function ImportCsvButton({
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (!file) return;
-                  if (file.size > 2_000_000) {
-                    toast.error("The file is larger than 2 MB.");
+                  if (file.size > IMPORT_MAX_BYTES) {
+                    toast.error("The file is larger than 2 MB. Split it into smaller files.");
                     return;
                   }
                   void file.text().then(setText);

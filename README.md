@@ -57,7 +57,8 @@ Repository layout:
 
 ## Local setup
 
-Requirements: Node 22+, Docker, and (only for `npm run typecheck:functions`) Deno 2.
+Requirements: Node 26 (the version CI and Vercel run; `package.json` pins it, and npm prints an
+engine warning on other versions), Docker, and (only for `npm run typecheck:functions`) Deno 2.
 
 ```bash
 npm install
@@ -142,7 +143,9 @@ OPENAI_API_KEY=sk-... LIVE_SMOKE_MODEL=<model-id> LIVE_SMOKE_MAX_USD=0.25 npm ru
 ```
 
 It prints each request's usage and estimated cost and stops before any request that would
-exceed the cap.
+exceed the cap. It talks to `https://api.openai.com/v1` only: with `OPENAI_BASE_URL` pointing
+anywhere else it refuses to start, so a pass cannot come from a gateway or from the double. It
+also refuses a price that is not above zero, because the cap is computed from the prices.
 
 ## Deploying
 
@@ -179,15 +182,25 @@ In order, the script:
 2. applies the migrations. They enable the extensions they need (`pgmq`, `pg_cron`, `pg_net`,
    `supabase_vault`);
 3. installs the worker secret on both sides: as an Edge Function secret (with `SITE_URL`) and
-   in Vault for the database;
+   in Vault for the database, after first proving that it can write the database's copy;
 4. deploys `worker` and `ops` (bundled on Supabase's side, so no local Docker is needed);
-5. has the database wake the worker once and fails unless the worker accepts.
+5. reports the three schedules, fails when one is missing or paused or when the every-minute
+   planner is not running, then has the database wake the worker once and fails unless the
+   worker accepts.
 
-It is safe to run again and never starts a campaign. Everything goes over HTTPS with the access
-token: no database password and no direct database connection are required. Migrations are
-applied through the Management API as one transaction, so a deployment either applies
-completely or changes nothing, and they are recorded in the Supabase CLI's own history table.
-To rehearse them on the project without changing it:
+It is safe to run again and never starts a campaign. It also never resumes a schedule somebody
+paused: that can start paid work, so it reports the pause and stops. Everything goes over HTTPS
+with the access token: no database password and no direct database connection are required.
+Migrations are applied through the Management API as one transaction, so a deployment either
+applies completely or changes nothing, and they are recorded in the Supabase CLI's own history
+table.
+
+The script deploys the migrations, functions and email templates **of this checkout**. It names
+the commit it deploys and refuses to run while files under `supabase/` or `scripts/` differ
+from that commit (`ALLOW_UNCOMMITTED=1` overrides), so what runs in production always
+corresponds to a commit.
+
+To rehearse the migrations on the project without changing it:
 
 ```bash
 npm run db:push:api -- --verify
@@ -209,7 +222,9 @@ exactly these and leaves every other project setting alone. Do not run `supabase
   account's address has to be one its holder can receive mail at.
 - **Minimum password length** 10, and **replacing a password needs the current one**. One-time
   links (invitation, reset) are exempt, which is what lets them set a password.
-- **Email links live for 24 hours** and work once.
+- **Email links live for 24 hours** and work once. The **one-time code** behind each link is
+  10 digits, the longest Supabase allows: a link is only as hard to guess as that code, and
+  anyone can ask for a reset link for an address they know.
 - **Every email template that carries a link** (invitation, password reset, sign-in link,
   confirmation, email change) from `supabase/templates/`. They all point to
   `SITE_URL/auth/confirm?token_hash=…`, a page of the web app, and your `SITE_URL` is written
@@ -217,6 +232,11 @@ exactly these and leaves every other project setting alone. Do not run `supabase
   **Continue** on that page, so mail scanners and chat previews that fetch the link cannot use
   it up.
 - **Site URL** = `SITE_URL` and **Redirect URLs** = `SITE_URL/**` only.
+
+The same command checks one Data API setting without changing it: **Max rows** (Project
+Settings → Data API) must be at least 1000, its default. The web app reads long lists a
+thousand rows at a time, and with a lower limit they would stop early without any error, so
+the deploy refuses such a project.
 
 Vercel's Supabase integration rewrites the last two on every deployment: it puts a deployment
 alias back as the Site URL (one that sits behind Vercel's own login) and re-adds wildcard
@@ -273,16 +293,54 @@ from an email.
 **If you use Vercel's Supabase integration**, it adds those two variables for you, but it also
 adds the Supabase secret key, the legacy JWT secret and the database password
 (`SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, `POSTGRES_*`). The
-web app reads none of them. Remove them from the Vercel project (Settings → Environment
-Variables) and redeploy, so that the web tier holds nothing that bypasses row level security.
-Never add `WORKER_SECRET` or an OpenAI key to Vercel either.
+web app reads none of them, but while they are there the web tier holds credentials that bypass
+row level security. They belong to the integration's connection between the Supabase resource
+and this Vercel project, so they cannot be deleted one by one under Settings → Environment
+Variables. To remove them, disconnect the project from the resource (Vercel → the project →
+**Integrations** → Supabase → **Manage** → the resource → **Projects**), add the two variables
+in the table above as ordinary Production variables, and redeploy. Disconnect the project only:
+do not delete the resource itself, which is the database. The same connection is what rewrites
+the Auth Site URL on every deployment (see "Auth settings"). If you keep the connection, those
+secrets stay in Vercel: treat access to the Vercel project like access to the database. Never
+add `WORKER_SECRET` or an OpenAI key to Vercel either.
 
-Vercel deploys a push whether or not CI has finished. To make a red build block production,
-require the CI checks on the production branch (GitHub branch protection) or deploy from a
-branch that only receives reviewed merges.
+**CI does not gate production by itself.** Vercel builds and promotes a push as soon as its own
+build succeeds, while the CI jobs for that commit are still running, and keeps it there if they
+fail. To hold a production build back until CI passes, add the three CI jobs as GitHub
+Deployment Checks in the Vercel project (Settings → **Build and Deployment** → **Deployment
+Checks** → **Add Checks** → GitHub): Vercel then assigns a production build to the production
+domain only once they have passed. Confirm once that this also holds for a `*.vercel.app`
+production domain if that is your `SITE_URL`. The alternative is a separate, protected
+production branch that only receives pull requests with those checks required.
 
-`npm run deploy:vercel` deploys from your machine with the Vercel CLI instead. You do not need
-it for a Git-connected project, where its deployment would be replaced by the next push.
+Deploy from Git rather than with the Vercel CLI from a working directory. `vercel build` packs
+every `.env*` file it finds in the directory into the deployment, and the operator env files
+there hold a Supabase access token. If you must use the CLI, run it in a clean export of the
+commit (`git worktree add` or `git archive`), never in the directory you operate from.
+
+#### Updating a deployment
+
+A push updates the web app at once; the database and the Edge Functions change only when you
+run `npm run deploy:supabase`. When a commit changes both, deploy the backend from that commit
+first, then push:
+
+```bash
+ENV_FILE=.env.operator.production npm run deploy:supabase
+```
+
+```bash
+git push
+```
+
+In between, the previous web build runs against the new backend, so a migration should keep
+working with the web build before it: add in one deployment, remove what is no longer used in
+a later one.
+
+A browser tab that was opened before a deployment belongs to the earlier build. Most buttons
+keep working, and where Vercel's Skew Protection applies (it depends on the plan) the tab stays
+on its own build for a while. When the server no longer has what a button calls, the tab says
+"This page is out of date" and offers a reload; nothing is changed until then. Signing out
+works from any tab.
 
 ### 4. Connect OpenAI
 
@@ -307,9 +365,10 @@ no price cannot be used.
 | Supabase access token | your operator env file only           | operator scripts (deploy, bootstrap)                           |
 | Publishable key       | Vercel environment                    | browsers (by design)                                           |
 
-The web app is built to hold nothing but the publishable key. If Vercel's Supabase integration
-has added the secret key, JWT secret or database password to the Vercel project, remove them
-(see Deploying, step 3).
+The web app is built to hold nothing but the publishable key, and reads nothing else. Vercel's
+Supabase integration nevertheless puts the secret key, the JWT secret and the database password
+into the Vercel project's environment; Deploying, step 3 says how to take them out and what it
+means to leave them.
 
 API keys and authorization headers are never written to logs, tables or exports. The app shows
 a key only as a masked hint such as `sk-…ab12`. Replacing a key takes effect immediately.
@@ -323,16 +382,20 @@ shows it, so there is nothing to keep. `npm run queues:activate` stores a secret
 is what the local stack uses, with the value from `supabase/functions/.env`.
 
 Stored settings prove nothing by themselves, so activation ends by sending one wake-up from the
-database and reporting the worker's answer. The same check on its own:
+database and reporting the worker's answer. The same check on its own, which stores nothing
+(for a hosted project, prefix it with the `ENV_FILE=…` you deploy with):
 
 ```bash
 npm run queues:activate -- --status
 ```
 
-It fails with the reason (HTTP 401 when the secret in the database and the function's secret
-differ, 503 when the worker cannot reach the database with its service key) instead of leaving
-work queued with nothing picking it up. A wake-up with nothing queued makes the worker look for
-work, find none and stop.
+It reports the three schedules (`lr-plan`, `lr-dispatch`, `lr-maintenance`) and fails when one
+is missing or paused, or when the every-minute planner has not run for a few minutes. It then
+runs one dispatch pass, the same one `lr-dispatch` runs every ten seconds, and sends the one
+wake-up. That fails with the reason (HTTP 401 when the secret in the database and the
+function's secret differ, 503 when the worker cannot reach the database with its service key)
+instead of leaving work queued with nothing picking it up. A wake-up with nothing queued makes
+the worker look for work, find none and stop.
 
 **Settings → Operational status** shows the scheduler heartbeat, whether recent wake-ups were
 accepted by the worker, queue backlog, stalled leases, connection state, provider errors and
@@ -341,10 +404,15 @@ budget exhaustion. To rotate the worker secret, run `npm run deploy:supabase` ag
 
 ## Backups
 
-- Use Supabase's managed backups (daily, or point-in-time recovery on plans that include it).
-- For your own copy, dump the schema and the data. This needs the database password and a
-  direct connection to the database (reset the password under **Database → Settings** if the
-  project was created by an integration and you never saw it; nothing in this app uses it):
+- **Recovery relies on Supabase's managed backups** (Dashboard → Database → Backups: daily on
+  paid plans, point-in-time recovery as an add-on). A restore puts the whole database back as
+  it was at that moment, so launched campaigns carry on from the restored state: pause them or
+  use the emergency stop right after a restore if that is not what you want, and check each
+  OpenAI connection with **Test connection**.
+- A logical dump is a readable copy of your data, not a recovery path. It needs the database
+  password and a direct connection to the database, which the token-only setup above does not
+  use (reset the password under **Database → Settings** if the project was created by an
+  integration and you never saw it; nothing in this app uses it):
 
 ```bash
 npx supabase db dump --remote=<project-ref> --password "$SUPABASE_DB_PASSWORD" -f backup-schema.sql
@@ -354,9 +422,12 @@ npx supabase db dump --remote=<project-ref> --password "$SUPABASE_DB_PASSWORD" -
 npx supabase db dump --remote=<project-ref> --password "$SUPABASE_DB_PASSWORD" --data-only --use-copy -f backup-data.sql
 ```
 
-- Vault secrets are encrypted with a key Supabase manages for the project. After restoring into
-  a **different** project, re-enter each OpenAI key in Settings and run
-  `npm run deploy:supabase` for that project.
+The two files are not a complete copy. Supabase's own parts are left out or only partly
+included: Vault (the OpenAI keys), the migration history, and the definitions of the queue
+and the schedules. This repository has no tested procedure for loading such a dump into a new
+project, so do not count on one for recovery. A new project always starts with
+`npm run deploy:supabase` and with the OpenAI keys entered again in Settings.
+
 - From the app, each campaign can be exported as CSV (results, fresh checks, usage) and JSON
   (transcripts, configuration). Exports respect workspace membership, escape spreadsheet
   formulas and contain no secrets.
@@ -365,21 +436,21 @@ npx supabase db dump --remote=<project-ref> --password "$SUPABASE_DB_PASSWORD" -
 
 ## Recovery
 
-| Situation                           | What to do                                                                                                                                                                              |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stop all spending now               | **Settings → Workspace → Emergency stop** (owner). Requests already sent finish and are recorded. Release it to resume.                                                                 |
-| A campaign was paused automatically | The provider rejected its model or settings. Open the campaign for the reason, fix it under **Edit**, apply the change, then **Resume**.                                                |
-| Connection "needs attention"        | Invalid key or exhausted quota. Fix it at OpenAI or replace the key, then **Test connection**: a successful test releases the held work.                                                |
-| Jobs in the review queue            | **Settings → Operational status → Review queue → Retry**. A retry continues from the last saved turn; completed turns are never sent again.                                             |
-| Conversation "expired"              | The provider no longer has the stored response the next turn needs. It is not replayed silently: use **Restart as a new conversation** on its page.                                     |
-| Request with an unknown outcome     | A timeout or dropped connection after sending. Its reservation stays held. An owner decides under **Usage**: count as spent, or release after checking the provider's usage page.       |
-| Worker stopped mid-request          | Nothing to do. The lease expires, the attempt is marked unknown or retried, and the job resumes from the last saved state.                                                              |
-| Budget reached                      | Raise the campaign or connection limit (or wait for the next day). Waiting jobs continue; skipped slots follow the campaign's missed-slot setting.                                      |
-| "Queue consumers are not activated" | Hosted: run `npm run deploy:supabase` (it installs one worker secret on both sides). Local stack: `npm run queues:activate`.                                                            |
-| An owner cannot sign in             | `npm run bootstrap:owner -- --email <their address> --link` (with `ENV_FILE=…` for the hosted project) prints a one-time link that lets them choose a new password. No email is needed. |
-| An email link says it has expired   | Links work once and for a limited time. Send a new invitation or reset email; for an owner without email delivery use the one-time link above.                                          |
-| A migration fails during a deploy   | Nothing was applied: the deployment is one transaction. The command names the failing file; fix it and run `npm run deploy:supabase` again.                                             |
-| Scheduler heartbeat is stale        | Check that the `lr-plan` and `lr-dispatch` jobs exist and are active (Dashboard → Integrations → Cron). `npm run deploy:supabase` puts back any schedule that was removed.              |
+| Situation                           | What to do                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Stop all spending now               | **Settings → Workspace → Emergency stop** (owner). Requests already sent finish and are recorded. Release it to resume.                                                                                                                                                                                                                                                                                                        |
+| A campaign was paused automatically | The provider rejected its model or settings. Open the campaign for the reason, fix it under **Edit**, apply the change, then **Resume**.                                                                                                                                                                                                                                                                                       |
+| Connection "needs attention"        | Invalid key or exhausted quota. Fix it at OpenAI or replace the key, then **Test connection**: a successful test releases the held work.                                                                                                                                                                                                                                                                                       |
+| Jobs in the review queue            | **Settings → Operational status → Review queue → Retry**. A retry continues from the last saved turn; completed turns are never sent again.                                                                                                                                                                                                                                                                                    |
+| Conversation "expired"              | The provider no longer has the stored response the next turn needs. It is not replayed silently: use **Restart as a new conversation** on its page.                                                                                                                                                                                                                                                                            |
+| Request with an unknown outcome     | A timeout or dropped connection after sending. Its reservation stays held. An owner decides under **Usage**: count as spent, or release after checking the provider's usage page.                                                                                                                                                                                                                                              |
+| Worker stopped mid-request          | Nothing to do. The lease expires, the attempt is marked unknown or retried, and the job resumes from the last saved state.                                                                                                                                                                                                                                                                                                     |
+| Budget reached                      | Raise the campaign or connection limit (or wait for the next day). Waiting jobs continue; skipped slots follow the campaign's missed-slot setting.                                                                                                                                                                                                                                                                             |
+| "Queue consumers are not activated" | Hosted: run `npm run deploy:supabase` (it installs one worker secret on both sides). Local stack: `npm run queues:activate`.                                                                                                                                                                                                                                                                                                   |
+| An owner cannot sign in             | `npm run bootstrap:owner -- --email <their address> --link` (with `ENV_FILE=…` for the hosted project) prints a one-time link that lets them choose a new password. No email is needed.                                                                                                                                                                                                                                        |
+| An email link says it has expired   | Links work once and for a limited time. Send a new invitation or reset email; for an owner without email delivery use the one-time link above.                                                                                                                                                                                                                                                                                 |
+| A migration fails during a deploy   | Through the Management API (the default) nothing was applied: the deployment is one transaction and the command names the failing file. When the request itself failed (too large, a gateway timeout, a lost reply) it says so, blames no file and reports what the project records. With `SUPABASE_DB_PASSWORD` (`supabase db push`), files before the failing one stay applied. Fix and run `npm run deploy:supabase` again. |
+| Scheduler heartbeat is stale        | `npm run queues:activate -- --status` (with your `ENV_FILE=…` for a hosted project) says which of `lr-plan`, `lr-dispatch` and `lr-maintenance` is missing or paused. Resume a paused one under Dashboard → Integrations → Cron. `npm run deploy:supabase` puts back a schedule that was removed; it never resumes a paused one.                                                                                               |
 
 Editing a launched campaign never rewrites history: changes are saved as pending, and applying
 them creates a new immutable revision used only for future work. Changing the fresh-check

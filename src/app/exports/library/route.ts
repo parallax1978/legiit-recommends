@@ -1,3 +1,4 @@
+import { inChunks, rowsOf } from "@/lib/batch";
 import { csvResponse, exportContext, fetchAll, notFoundResponse } from "@/lib/export";
 import { toCsv } from "@shared/core/csv.ts";
 import { TEMPLATE_KINDS } from "@shared/core/templates.ts";
@@ -17,20 +18,23 @@ export async function GET(request: Request) {
       .eq("workspace_id", ctx.session.workspace.id)
       .eq("kind", kind as "initial_question")
       .order("created_at")
+      .order("id")
       .range(from, to),
   );
   const versionIds = templates
     .map((template) => template.current_version_id)
     .filter((id): id is string => Boolean(id));
-  const bodies = new Map<string, { body: string; version: number }>();
-  for (let index = 0; index < versionIds.length; index += 200) {
-    const { data } = await ctx.supabase
-      .from("template_versions")
-      .select("id, body, version")
-      .in("id", versionIds.slice(index, index + 200));
-    for (const version of data ?? [])
-      bodies.set(version.id, { body: version.body, version: version.version });
-  }
+  // In chunks that fit a request URL; a chunk that cannot be read fails the export instead of
+  // leaving those prompts with an empty body.
+  const versions = await inChunks(versionIds, (chunk) =>
+    rowsOf(
+      "The export",
+      ctx.supabase.from("template_versions").select("id, body, version").in("id", chunk),
+    ),
+  );
+  const bodies = new Map(
+    versions.map((version) => [version.id, { body: version.body, version: version.version }]),
+  );
 
   return csvResponse(
     `prompts-${kind.replace(/_/g, "-")}.csv`,

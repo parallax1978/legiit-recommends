@@ -1,7 +1,9 @@
 import "server-only";
 import { notFound } from "next/navigation";
 import type { CampaignDraftInput } from "@/lib/actions/campaigns";
+import { inChunks, readError, rowsOf, selectAll } from "@/lib/batch";
 import { minutesToTime } from "@/lib/format";
+import { uuidParam } from "@/lib/params";
 import type { Session } from "@/lib/session";
 import type { ServerClient } from "@/lib/supabase/server";
 import { utcToZonedInput } from "@/lib/timezone";
@@ -29,23 +31,27 @@ export async function loadCampaign(
   session: Session,
   id: string,
 ): Promise<Campaign> {
-  if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
-  const { data } = await supabase
+  // Anything that is not a UUID cannot name a campaign; asking the database would be an error.
+  if (!uuidParam(id)) notFound();
+  const { data, error } = await supabase
     .from("campaigns")
     .select("*")
     .eq("id", id)
     .eq("workspace_id", session.workspace.id)
     .maybeSingle();
+  // "Could not be read" is not "does not exist": only the second is a 404.
+  if (error) throw readError("The campaign", error);
   if (!data) notFound();
   return data;
 }
 
 export async function loadRevision(supabase: ServerClient, revisionId: string): Promise<Revision> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("campaign_revisions")
     .select("*")
     .eq("id", revisionId)
     .maybeSingle();
+  if (error) throw readError("The campaign's configuration", error);
   if (!data) notFound();
   return data;
 }
@@ -58,42 +64,54 @@ export async function loadRevisionSteps(
   supabase: ServerClient,
   revisionId: string,
 ): Promise<RevisionStep[]> {
-  const [{ data: steps }, { data: links }] = await Promise.all([
-    supabase
-      .from("campaign_revision_steps")
-      .select("step_index, kind, label")
-      .eq("revision_id", revisionId)
-      .order("step_index"),
-    supabase
-      .from("campaign_revision_step_templates")
-      .select("step_index, position, template_id, template_version_id")
-      .eq("revision_id", revisionId)
-      .order("position"),
-  ]);
-  const templateIds = [...new Set((links ?? []).map((link) => link.template_id))];
-  const { data: templates } = templateIds.length
-    ? await supabase.from("templates").select("id, current_version_id").in("id", templateIds)
-    : { data: [] };
-  const currentVersion = new Map(
-    (templates ?? []).map((template) => [template.id, template.current_version_id]),
-  );
-  const versionIds = [
-    ...new Set(
-      (links ?? [])
-        .map((link) => link.template_version_id ?? currentVersion.get(link.template_id))
-        .filter((id): id is string => Boolean(id)),
+  const [steps, links] = await Promise.all([
+    rowsOf(
+      "The campaign's steps",
+      supabase
+        .from("campaign_revision_steps")
+        .select("step_index, kind, label")
+        .eq("revision_id", revisionId)
+        .order("step_index"),
     ),
-  ];
-  const { data: versions } = versionIds.length
-    ? await supabase.from("template_versions").select("id, body, version").in("id", versionIds)
-    : { data: [] };
-  const versionById = new Map((versions ?? []).map((version) => [version.id, version]));
+    // A step can use hundreds of wordings: read them in pages, in their order within the step.
+    selectAll("The campaign's wordings", (from, to) =>
+      supabase
+        .from("campaign_revision_step_templates")
+        .select("step_index, position, template_id, template_version_id")
+        .eq("revision_id", revisionId)
+        .order("position")
+        .order("step_index")
+        .range(from, to),
+    ),
+  ]);
+  // Looked up in chunks, so the list of ids never has to fit in one request URL.
+  const templates = await inChunks(
+    links.map((link) => link.template_id),
+    (chunk) =>
+      rowsOf(
+        "The campaign's wordings",
+        supabase.from("templates").select("id, current_version_id").in("id", chunk),
+      ),
+  );
+  const currentVersion = new Map(
+    templates.map((template) => [template.id, template.current_version_id]),
+  );
+  const versionIds = links
+    .map((link) => link.template_version_id ?? currentVersion.get(link.template_id))
+    .filter((id): id is string => Boolean(id));
+  const versions = await inChunks(versionIds, (chunk) =>
+    rowsOf(
+      "The campaign's wordings",
+      supabase.from("template_versions").select("id, body, version").in("id", chunk),
+    ),
+  );
+  const versionById = new Map(versions.map((version) => [version.id, version]));
 
-  return (steps ?? []).map((step) => ({
+  return steps.map((step) => ({
     index: step.step_index,
     kind: step.kind as TemplateKind,
     label: step.label,
-    wordings: (links ?? [])
+    wordings: links
       .filter((link) => link.step_index === step.step_index)
       .map((link) => {
         const versionId = link.template_version_id ?? currentVersion.get(link.template_id) ?? null;

@@ -5,8 +5,9 @@ import { SetupForm } from "@/components/auth-forms";
 import { ActionButton } from "@/components/ui/action-button";
 import { Button } from "@/components/ui/button";
 import { Callout, Skeleton } from "@/components/ui/card";
-import { joinInvitedWorkspaces, signOut } from "@/lib/actions/auth";
+import { joinInvitedWorkspaces } from "@/lib/actions/auth";
 import { getIdentity, getSession } from "@/lib/session";
+import { SIGN_OUT_PATH } from "@/lib/sign-out";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Set up your workspace" };
@@ -23,12 +24,11 @@ async function Gate() {
   if (await getSession()) redirect("/overview");
 
   const supabase = await createClient();
-  const { data } = await supabase.rpc("setup_status");
-  const status = (data ?? {
-    workspace_count: 0,
-    can_create_workspace: false,
-    pending_invitations: 0,
-  }) as unknown as SetupStatus;
+  const { data, error } = await supabase.rpc("setup_status");
+  // Without an answer nothing is known about this account: say that the page failed, never
+  // that the person has no access.
+  if (error || !data) throw new Error("The account's status could not be loaded.");
+  const status = data as unknown as SetupStatus;
 
   if (status.pending_invitations > 0) {
     return (
@@ -66,7 +66,7 @@ async function Gate() {
         {identity.email} is signed in but is not a member of any workspace. Ask a workspace owner to
         invite this email address.
       </Callout>
-      <form action={signOut}>
+      <form method="post" action={SIGN_OUT_PATH}>
         <Button type="submit" variant="secondary" className="w-full">
           Sign out
         </Button>

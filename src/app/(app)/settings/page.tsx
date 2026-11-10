@@ -38,6 +38,7 @@ import {
 import { LocalTime } from "@/components/ui/local-time";
 import { DefinitionList, PermissionNote, Screen, Tabs } from "@/components/ui/misc";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/table";
+import { inChunks, rowsOf } from "@/lib/batch";
 import { formatDate, formatNumber, formatUsd } from "@/lib/format";
 import { dataSharing, errorClass, humanize, jobKind, pauseReason, reasonText } from "@/lib/labels";
 import { first, type SearchParams } from "@/lib/params";
@@ -211,35 +212,45 @@ function WorkspaceTab({ session }: { session: Session }) {
 async function MembersTab({ session, supabase }: { session: Session; supabase: ServerClient }) {
   const owner = hasRole(session.role, "owner");
   const workspaceId = session.workspace.id;
-  const { data: members } = await supabase
-    .from("workspace_members")
-    .select("user_id, role, created_at")
-    .eq("workspace_id", workspaceId)
-    .order("created_at");
-  const ids = (members ?? []).map((member) => member.user_id);
-  const [{ data: profiles }, invitations] = await Promise.all([
+  // Read failures are errors here, not empty lists: "no members" and "no invitations waiting"
+  // must only ever be shown when that is what the database said.
+  const members = await rowsOf(
+    "Members",
     supabase
-      .from("profiles")
-      .select("id, email, display_name")
-      .in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]),
+      .from("workspace_members")
+      .select("user_id, role, created_at")
+      .eq("workspace_id", workspaceId)
+      .order("created_at"),
+  );
+  const ids = members.map((member) => member.user_id);
+  const [profiles, invitations] = await Promise.all([
+    inChunks(ids, (chunk) =>
+      rowsOf(
+        "Members",
+        supabase.from("profiles").select("id, email, display_name").in("id", chunk),
+      ),
+    ),
     owner
-      ? supabase
-          .from("workspace_invitations")
-          .select("id, email, role, created_at, expires_at")
-          .eq("workspace_id", workspaceId)
-          .eq("status", "pending")
-          .order("created_at", { ascending: false })
-      : Promise.resolve({
-          data: [] as {
+      ? rowsOf(
+          "Invitations",
+          supabase
+            .from("workspace_invitations")
+            .select("id, email, role, created_at, expires_at")
+            .eq("workspace_id", workspaceId)
+            .eq("status", "pending")
+            .order("created_at", { ascending: false }),
+        )
+      : Promise.resolve(
+          [] as {
             id: string;
             email: string;
             role: "owner" | "admin" | "member";
             created_at: string;
             expires_at: string;
           }[],
-        }),
+        ),
   ]);
-  const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
 
   return (
     <div className="flex flex-col gap-6">
@@ -280,7 +291,7 @@ async function MembersTab({ session, supabase }: { session: Session; supabase: S
             </tr>
           </thead>
           <tbody>
-            {(members ?? []).map((member) => {
+            {members.map((member) => {
               const profile = profileById.get(member.user_id);
               const label = profile?.display_name || profile?.email || "Member";
               return (
@@ -330,7 +341,7 @@ async function MembersTab({ session, supabase }: { session: Session; supabase: S
             The link in an invitation email works once and for 24 hours. Send the invitation again
             to give someone a new one.
           </p>
-          {(invitations.data ?? []).length === 0 ? (
+          {invitations.length === 0 ? (
             <p className="text-ink-muted text-[13px]">No invitations are waiting to be accepted.</p>
           ) : (
             <TableWrap label="Pending invitations">
@@ -345,7 +356,7 @@ async function MembersTab({ session, supabase }: { session: Session; supabase: S
                   </tr>
                 </thead>
                 <tbody>
-                  {(invitations.data ?? []).map((invitation) => (
+                  {invitations.map((invitation) => (
                     <Tr key={invitation.id}>
                       <Td className="font-medium">{invitation.email}</Td>
                       <Td>

@@ -83,3 +83,39 @@ export function migrationRequestSql(migration: LocalMigration): string {
     `values (${sqlLiteral(migration.version)}, ${sqlLiteral(migration.name)}, array[${tag}${migration.sql}${tag}]);`,
   ].join("\n");
 }
+
+/** What a failed "apply everything" request turned out to mean, judged from the history table. */
+export type ApplyFailure =
+  /** Every pending migration is recorded after all: the reply was lost, the work was not. */
+  | { outcome: "applied" }
+  /** Nothing is recorded and the database rejected a statement: one of the files is at fault. */
+  | { outcome: "sql_error" }
+  /** Nothing is recorded and the request failed for a reason that is not in any file. */
+  | { outcome: "not_applied"; tooLarge: boolean; mayStillFinish: boolean }
+  /** Some but not all are recorded. One transaction cannot do this: the history was changed. */
+  | { outcome: "partial"; recorded: string[] };
+
+/**
+ * Decides what to tell the operator after the single-transaction request failed. The history
+ * table is the evidence, read again after the failure: the HTTP status only distinguishes "the
+ * database said no" (400) from everything a gateway or network can do to a request.
+ */
+export function classifyApplyFailure(
+  status: number | null,
+  pendingVersions: string[],
+  recordedVersions: string[],
+): ApplyFailure {
+  const now = new Set(recordedVersions);
+  const recorded = pendingVersions.filter((version) => now.has(version));
+  if (pendingVersions.length > 0 && recorded.length === pendingVersions.length) {
+    return { outcome: "applied" };
+  }
+  if (recorded.length > 0) return { outcome: "partial", recorded };
+  if (status === 400) return { outcome: "sql_error" };
+  return {
+    outcome: "not_applied",
+    tooLarge: status === 413,
+    // No reply, or a gateway that gave up waiting: the database may still be running the batch.
+    mayStillFinish: status === null || status === 408 || (status >= 502 && status <= 504),
+  };
+}

@@ -1014,6 +1014,9 @@ isOneToOne: false
 "svc_save_model_verification":
 { Args: { "p_actor": string,"p_capabilities": Json,"p_connection_id": string,"p_error"?: string,"p_model_id": string,"p_verified": boolean }; Returns: undefined
                            },
+"svc_schedule_status":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
 "svc_store_connection_secret":
 { Args: { "p_actor": string,"p_api_key": string,"p_connection_id": string }; Returns: undefined
                            },
@@ -1028,6 +1031,12 @@ isOneToOne: false
                            },
 "svc_wake_result":
 { Args: { "p_request_id": number }; Returns: Json
+                           },
+"svc_worker_ready":
+{ Args: Record<PropertyKey, never>; Returns: boolean
+                           },
+"templates_in_use":
+{ Args: { "p_workspace_id": string }; Returns: (string)[]
                            },
 "update_connection":
 { Args: { "p_connection_id": string,"p_patch": Json }; Returns: undefined

@@ -1,4 +1,5 @@
 import "server-only";
+import { PAGE_OUT_OF_RANGE, readError, rowsOf } from "@/lib/batch";
 import type { ServerClient } from "@/lib/supabase/server";
 
 export interface RunListFilters {
@@ -41,29 +42,25 @@ export async function listRuns(
   page: number,
   pageSize = RUN_PAGE_SIZE,
 ): Promise<{ rows: RunListRow[]; total: number }> {
-  let ids: string[] | null = null;
-  if (filters.inclusion) {
-    // Runs with at least one response classified this way.
-    let turns = supabase
-      .from("run_turns")
-      .select("run_id")
-      .eq("workspace_id", filters.workspaceId)
-      .eq("inclusion", filters.inclusion)
-      .limit(2000);
-    if (filters.campaignId) turns = turns.eq("campaign_id", filters.campaignId);
-    const { data } = await turns;
-    ids = [...new Set((data ?? []).map((turn) => turn.run_id))];
-    if (ids.length === 0) return { rows: [], total: 0 };
-  }
+  const COLUMNS =
+    "id, campaign_id, kind, ordinal, status, model, steps_total, steps_completed, scheduled_for, started_at, completed_at, error_class, target_in_first_response, restart_of_run_id, content_purged_at, created_at, campaigns(name)";
+  const plain = supabase.from("runs").select(COLUMNS, { count: "exact" });
+  // "Any response classified as": the database joins each conversation to its matching
+  // responses, so filtering, counting and paging all happen there. Collecting the matching ids
+  // first and sending them back as a list stops working at a few hundred conversations, because
+  // the list has to fit in the request URL.
+  const selected = filters.inclusion
+    ? (supabase
+        .from("runs")
+        .select(`${COLUMNS}, run_turns!inner(inclusion)`, { count: "exact" })
+        .eq("run_turns.inclusion", filters.inclusion) as unknown as typeof plain)
+    : plain;
 
-  let query = supabase
-    .from("runs")
-    .select(
-      "id, campaign_id, kind, ordinal, status, model, steps_total, steps_completed, scheduled_for, started_at, completed_at, error_class, target_in_first_response, restart_of_run_id, content_purged_at, created_at, campaigns(name)",
-      { count: "exact" },
-    )
+  let query = selected
     .eq("workspace_id", filters.workspaceId)
+    // Newest first; the id breaks ties so a row cannot appear on two pages.
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range((page - 1) * pageSize, page * pageSize - 1);
   if (filters.campaignId) query = query.eq("campaign_id", filters.campaignId);
   if (filters.status) {
@@ -76,20 +73,26 @@ export async function listRuns(
   }
   if (filters.kind === "test" || filters.kind === "scheduled")
     query = query.eq("kind", filters.kind);
-  if (ids) query = query.in("id", ids);
 
   const { data: runs, count, error } = await query;
-  if (error) throw new Error("Conversations could not be loaded.");
+  // A page number past the end (a filtered list that has shrunk, an old link): an empty page,
+  // which the screen shows as "nothing matches", not a failure.
+  if (error && error.code === PAGE_OUT_OF_RANGE) return { rows: [], total: 0 };
+  if (error) throw readError("Conversations", error);
+  // One page of conversations: at most `pageSize` ids, so this list is always short.
   const runIds = (runs ?? []).map((run) => run.id);
-  const { data: turns } = runIds.length
-    ? await supabase
-        .from("run_turns")
-        .select("run_id, step_index, status, inclusion, rank, list_position, cost_usd")
-        .in("run_id", runIds)
-    : { data: [] };
+  const turns = runIds.length
+    ? await rowsOf(
+        "Conversations",
+        supabase
+          .from("run_turns")
+          .select("run_id, step_index, status, inclusion, rank, list_position, cost_usd")
+          .in("run_id", runIds),
+      )
+    : [];
 
   const rows = (runs ?? []).map((run): RunListRow => {
-    const own = (turns ?? []).filter((turn) => turn.run_id === run.id);
+    const own = turns.filter((turn) => turn.run_id === run.id);
     const firstTurn = own.find((turn) => turn.step_index === 1 && turn.status === "completed");
     const finalTurn = run.steps_total
       ? own.find((turn) => turn.step_index === run.steps_total && turn.status === "completed")

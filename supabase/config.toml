@@ -244,8 +244,9 @@ secure_password_change = false
 require_current_password = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
-# Number of characters used in the email OTP.
-otp_length = 6
+# Number of characters used in the email OTP. The longest the Auth server allows: the secret in
+# every emailed link is derived from this code (see scripts/lib/auth-settings.ts).
+otp_length = 10
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 # One day, so an invitation can be opened the next morning. Also applied to the hosted project.
 otp_expiry = 86400

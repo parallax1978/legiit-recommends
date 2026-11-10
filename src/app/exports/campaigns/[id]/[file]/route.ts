@@ -1,3 +1,4 @@
+import { rowsOf } from "@/lib/batch";
 import {
   EXPORT_ROW_LIMIT,
   csvResponse,
@@ -7,6 +8,7 @@ import {
   jsonResponse,
   notFoundResponse,
   today,
+  unavailableResponse,
   type ExportContext,
 } from "@/lib/export";
 import { loadRevisionSteps } from "@/lib/queries/campaign";
@@ -25,11 +27,13 @@ export async function GET(
   const ctx = await exportContext();
   if (ctx instanceof Response) return ctx;
   if (!UUID.test(id)) return notFoundResponse();
-  const { data: campaign } = await ctx.supabase
+  const { data: campaign, error } = await ctx.supabase
     .from("campaigns")
     .select("*")
     .eq("id", id)
     .maybeSingle();
+  // A read that failed is not "no such campaign".
+  if (error) return unavailableResponse();
   // Not found and not permitted look the same: an id alone reveals nothing.
   if (
     !campaign ||
@@ -37,14 +41,21 @@ export async function GET(
   )
     return notFoundResponse();
   const base = `${fileSlug(campaign.name)}-${today()}`;
+  // A table export that stopped at the row limit says so in its file name: a CSV has no other
+  // place for it, and a file that silently ends early reads as complete.
+  const csvFile = (name: string, table: CsvTable) =>
+    csvResponse(
+      `${base}-${name}${table.truncated ? `-first-${EXPORT_ROW_LIMIT}-rows` : ""}.csv`,
+      table.csv,
+    );
 
   switch (file) {
     case "conversations.csv":
-      return csvResponse(`${base}-conversations.csv`, await conversationsCsv(ctx, campaign));
+      return csvFile("conversations", await conversationsCsv(ctx, campaign));
     case "fresh-checks.csv":
-      return csvResponse(`${base}-fresh-checks.csv`, await freshChecksCsv(ctx, campaign));
+      return csvFile("fresh-checks", await freshChecksCsv(ctx, campaign));
     case "usage.csv":
-      return csvResponse(`${base}-usage.csv`, await usageCsv(ctx, campaign));
+      return csvFile("usage", await usageCsv(ctx, campaign));
     case "transcripts.json":
       return jsonResponse(`${base}-transcripts.json`, await transcriptsJson(ctx, campaign));
     case "config.json":
@@ -54,45 +65,57 @@ export async function GET(
   }
 }
 
+/** A CSV and whether it stops at the export row limit. */
+interface CsvTable {
+  csv: string;
+  truncated: boolean;
+}
+
 async function revisionNumbers(
   ctx: ExportContext,
   campaignId: string,
 ): Promise<Map<string, number>> {
-  const { data } = await ctx.supabase
-    .from("campaign_revisions")
-    .select("id, revision_number")
-    .eq("campaign_id", campaignId);
-  return new Map((data ?? []).map((revision) => [revision.id, revision.revision_number]));
+  const revisions = await rowsOf(
+    "The export",
+    ctx.supabase
+      .from("campaign_revisions")
+      .select("id, revision_number")
+      .eq("campaign_id", campaignId),
+  );
+  return new Map(revisions.map((revision) => [revision.id, revision.revision_number]));
 }
 
-async function conversationsCsv(ctx: ExportContext, campaign: Campaign): Promise<string> {
-  const [{ rows: runs }, { rows: turns }, revisions] = await Promise.all([
-    fetchAll((from, to) =>
-      ctx.supabase
-        .from("runs")
-        .select("*")
-        .eq("campaign_id", campaign.id)
-        .order("created_at")
-        .range(from, to),
-    ),
-    fetchAll(
-      (from, to) =>
+async function conversationsCsv(ctx: ExportContext, campaign: Campaign): Promise<CsvTable> {
+  const [{ rows: runs, truncated: runsCut }, { rows: turns, truncated: turnsCut }, revisions] =
+    await Promise.all([
+      fetchAll((from, to) =>
         ctx.supabase
-          .from("run_turns")
-          .select(
-            "run_id, step_index, status, inclusion, mentioned, rank, list_position, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, cost_usd, returned_model",
-          )
+          .from("runs")
+          .select("*")
           .eq("campaign_id", campaign.id)
-          .order("run_id")
+          .order("created_at")
+          .order("id")
           .range(from, to),
-      EXPORT_ROW_LIMIT * 4,
-    ),
-    revisionNumbers(ctx, campaign.id),
-  ]);
+      ),
+      fetchAll(
+        (from, to) =>
+          ctx.supabase
+            .from("run_turns")
+            .select(
+              "run_id, step_index, status, inclusion, mentioned, rank, list_position, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, cost_usd, returned_model",
+            )
+            .eq("campaign_id", campaign.id)
+            .order("run_id")
+            .order("step_index")
+            .range(from, to),
+        EXPORT_ROW_LIMIT * 4,
+      ),
+      revisionNumbers(ctx, campaign.id),
+    ]);
   const byRun = new Map<string, typeof turns>();
   for (const turn of turns) byRun.set(turn.run_id, [...(byRun.get(turn.run_id) ?? []), turn]);
 
-  return toCsv(
+  const csv = toCsv(
     runs.map((run) => {
       const own = byRun.get(run.id) ?? [];
       const first = own.find((turn) => turn.step_index === 1);
@@ -173,23 +196,29 @@ async function conversationsCsv(ctx: ExportContext, campaign: Campaign): Promise
       { header: "restart_of_conversation_id", value: (row) => row.run.restart_of_run_id },
     ],
   );
+  // Without all of its turns a conversation's first and final columns would be blank.
+  return { csv, truncated: runsCut || turnsCut };
 }
 
-async function freshChecksCsv(ctx: ExportContext, campaign: Campaign): Promise<string> {
-  const [{ rows: checks }, { data: groups }, revisions] = await Promise.all([
+async function freshChecksCsv(ctx: ExportContext, campaign: Campaign): Promise<CsvTable> {
+  const [{ rows: checks, truncated }, groups, revisions] = await Promise.all([
     fetchAll((from, to) =>
       ctx.supabase
         .from("fresh_checks")
         .select("*")
         .eq("campaign_id", campaign.id)
         .order("created_at")
+        .order("id")
         .range(from, to),
     ),
-    ctx.supabase.from("comparison_groups").select("id, sequence").eq("campaign_id", campaign.id),
+    rowsOf(
+      "The export",
+      ctx.supabase.from("comparison_groups").select("id, sequence").eq("campaign_id", campaign.id),
+    ),
     revisionNumbers(ctx, campaign.id),
   ]);
-  const sequence = new Map((groups ?? []).map((group) => [group.id, group.sequence]));
-  return toCsv(checks, [
+  const sequence = new Map(groups.map((group) => [group.id, group.sequence]));
+  const csv = toCsv(checks, [
     { header: "source", value: () => "OpenAI API" },
     { header: "fresh_check_id", value: (row) => row.id },
     { header: "comparison_group", value: (row) => sequence.get(row.comparison_group_id) ?? null },
@@ -224,18 +253,20 @@ async function freshChecksCsv(ctx: ExportContext, campaign: Campaign): Promise<s
     { header: "completed_at_utc", value: (row) => row.completed_at },
     { header: "response", value: (row) => row.output_text },
   ]);
+  return { csv, truncated };
 }
 
-async function usageCsv(ctx: ExportContext, campaign: Campaign): Promise<string> {
-  const { rows } = await fetchAll((from, to) =>
+async function usageCsv(ctx: ExportContext, campaign: Campaign): Promise<CsvTable> {
+  const { rows, truncated } = await fetchAll((from, to) =>
     ctx.supabase
       .from("usage_ledger")
       .select("*")
       .eq("campaign_id", campaign.id)
       .order("occurred_at")
+      .order("id")
       .range(from, to),
   );
-  return toCsv(rows, [
+  const csv = toCsv(rows, [
     { header: "occurred_at_utc", value: (row) => row.occurred_at },
     { header: "connection_day_utc", value: (row) => row.connection_day },
     { header: "campaign_day", value: (row) => row.campaign_day },
@@ -257,11 +288,13 @@ async function usageCsv(ctx: ExportContext, campaign: Campaign): Promise<string>
     { header: "price_version_id", value: (row) => row.price_id },
     { header: "request_id", value: (row) => row.attempt_id },
   ]);
+  return { csv, truncated };
 }
 
 const TRANSCRIPT_RUN_LIMIT = 5_000;
 
 async function transcriptsJson(ctx: ExportContext, campaign: Campaign) {
+  const allTurns = () => ctx.supabase.from("run_turns").select("*");
   const [{ rows: runs, truncated }, revisions] = await Promise.all([
     fetchAll(
       (from, to) =>
@@ -270,23 +303,35 @@ async function transcriptsJson(ctx: ExportContext, campaign: Campaign) {
           .select("*")
           .eq("campaign_id", campaign.id)
           .order("created_at")
+          .order("id")
           .range(from, to),
       TRANSCRIPT_RUN_LIMIT,
     ),
     revisionNumbers(ctx, campaign.id),
   ]);
   const runIds = new Set(runs.map((run) => run.id));
-  const { rows: turns } = await fetchAll(
-    (from, to) =>
-      ctx.supabase
-        .from("run_turns")
-        .select("*")
+  // The turns of the exported conversations. When the conversation list was cut at its limit,
+  // reading "the campaign's turns" up to a row limit would leave a random share of the exported
+  // conversations without any: turns are then restricted to conversations created no later than
+  // the last exported one (a conversation has at most 12 turns, so the limit below holds them).
+  const lastCreatedAt = truncated ? runs.at(-1)?.created_at : undefined;
+  const { rows: turns, truncated: turnsCut } = await fetchAll(
+    (from, to) => {
+      const query = lastCreatedAt
+        ? (ctx.supabase
+            .from("run_turns")
+            .select("*, runs!inner(created_at)")
+            .lte("runs.created_at", lastCreatedAt) as unknown as ReturnType<typeof allTurns>)
+        : allTurns();
+      return query
         .eq("campaign_id", campaign.id)
         .order("run_id")
         .order("step_index")
-        .range(from, to),
-    TRANSCRIPT_RUN_LIMIT * 12,
+        .range(from, to);
+    },
+    TRANSCRIPT_RUN_LIMIT * 12 + 1000,
   );
+  if (turnsCut) throw new Error("The transcripts could not be read completely.");
   const byRun = new Map<string, typeof turns>();
   for (const turn of turns)
     if (runIds.has(turn.run_id)) byRun.set(turn.run_id, [...(byRun.get(turn.run_id) ?? []), turn]);
@@ -361,32 +406,38 @@ async function transcriptsJson(ctx: ExportContext, campaign: Campaign) {
 }
 
 async function configJson(ctx: ExportContext, campaign: Campaign) {
-  const { data: revisions } = await ctx.supabase
-    .from("campaign_revisions")
-    .select("*")
-    .eq("campaign_id", campaign.id)
-    .neq("state", "discarded")
-    .order("revision_number");
+  const revisions = await rowsOf(
+    "The export",
+    ctx.supabase
+      .from("campaign_revisions")
+      .select("*")
+      .eq("campaign_id", campaign.id)
+      .neq("state", "discarded")
+      .order("revision_number"),
+  );
   const detailed = [];
-  for (const revision of revisions ?? []) {
+  for (const revision of revisions) {
     const steps = await loadRevisionSteps(ctx.supabase, revision.id);
     let questions: { position: number; body: string; is_held_out: boolean }[] = [];
     let questionSet: { name: string } | null = null;
     if (revision.probe_set_id) {
-      const { data: set } = await ctx.supabase
+      const { data: set, error } = await ctx.supabase
         .from("probe_sets")
         .select("name, current_version_id")
         .eq("id", revision.probe_set_id)
         .maybeSingle();
+      if (error) throw new Error("The export could not be loaded.");
       questionSet = set ? { name: set.name } : null;
       const versionId = revision.probe_set_version_id ?? set?.current_version_id;
       if (versionId) {
-        const { data } = await ctx.supabase
-          .from("probe_questions")
-          .select("position, body, is_held_out")
-          .eq("probe_set_version_id", versionId)
-          .order("position");
-        questions = data ?? [];
+        questions = await rowsOf(
+          "The export",
+          ctx.supabase
+            .from("probe_questions")
+            .select("position, body, is_held_out")
+            .eq("probe_set_version_id", versionId)
+            .order("position"),
+        );
       }
     }
     const {

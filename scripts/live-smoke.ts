@@ -11,7 +11,10 @@
  * Before each request its worst-case cost is added to a running total and the run stops if the
  * total would exceed LIVE_SMOKE_MAX_USD. Prices come from the project's price table when
  * SUPABASE_URL and SUPABASE_SECRET_KEY are set, or from LIVE_SMOKE_INPUT_USD_PER_MTOK and
- * LIVE_SMOKE_OUTPUT_USD_PER_MTOK. Without a price the test refuses to run.
+ * LIVE_SMOKE_OUTPUT_USD_PER_MTOK. Without a price above zero the test refuses to run.
+ *
+ * It only ever talks to https://api.openai.com/v1 and refuses to start when OPENAI_BASE_URL
+ * points anywhere else, so a pass cannot come from a gateway or from the test double.
  *
  * Optional: LIVE_SMOKE_QUESTION, LIVE_SMOKE_BUSINESS, LIVE_SMOKE_MAX_OUTPUT_TOKENS (default 400).
  */
@@ -34,6 +37,7 @@ import type {
   ResponsesRequest,
 } from "../supabase/functions/_shared/provider/types.ts";
 import { adminClient, env, fail, loadEnvFiles, requireEnv } from "./lib/env";
+import { OPENAI_API_BASE_URL, endpointOverrideProblem, positivePrice } from "./lib/smoke";
 
 async function loadPrice(model: string): Promise<PriceRow> {
   const input = env("LIVE_SMOKE_INPUT_USD_PER_MTOK");
@@ -71,6 +75,8 @@ async function loadPrice(model: string): Promise<PriceRow> {
 
 async function main() {
   loadEnvFiles();
+  const redirected = endpointOverrideProblem(env("OPENAI_BASE_URL"));
+  if (redirected) fail(redirected);
   const apiKey = requireEnv("OPENAI_API_KEY", "Use a key limited to the model you want to test.");
   const model = requireEnv("LIVE_SMOKE_MODEL", "Set it to an exact model ID your key can use.");
   const cap = Number(
@@ -83,14 +89,26 @@ async function main() {
     "What are some well-regarded project management tools for small teams?";
   const business = env("LIVE_SMOKE_BUSINESS") ?? "Example Planner (https://planner.example)";
   const price = await loadPrice(model);
+  try {
+    // The cap is computed from these two, wherever they came from (environment or price table).
+    positivePrice("The input price", price.input_usd_per_mtok);
+    positivePrice("The output price", price.output_usd_per_mtok);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
 
   console.log("\n=== LIVE OpenAI smoke test: real requests, real charges ===");
+  console.log(`Endpoint: ${OPENAI_API_BASE_URL}`);
+  if (env("OPENAI_ORG_ID") || env("OPENAI_PROJECT_ID")) {
+    console.log("Organization or project: taken from OPENAI_ORG_ID / OPENAI_PROJECT_ID.");
+  }
   console.log(
     `Model: ${model} | spending cap: $${cap.toFixed(4)} | output cap per response: ${maxOutput} tokens\n`,
   );
 
-  // The same adapter the Edge Functions use: one HTTP request per call, no hidden retries.
-  const provider = createOpenAIProvider({ apiKey });
+  // The same adapter the Edge Functions use: one HTTP request per call, no hidden retries. The
+  // endpoint is named outright, so nothing in the environment can send the run elsewhere.
+  const provider = createOpenAIProvider({ apiKey, baseURL: OPENAI_API_BASE_URL });
   const listed = await provider.listModels({ timeoutMs: 30_000 });
   if (!listed.ok) {
     fail(

@@ -68,11 +68,20 @@ export async function createTemplates(input: {
   };
 }
 
-/** Parses an uploaded CSV on the server and returns the rows for review. Nothing is saved yet. */
-export async function parsePromptImport(
-  kind: string,
-  csvText: string,
-): Promise<ActionResult<{ body: string; label: string | null; problem: string | null }[]>> {
+/**
+ * Parses an uploaded CSV on the server and returns the rows for review. Nothing is saved yet.
+ *
+ * The text arrives inside one object on purpose. A string passed as an argument of its own
+ * sits directly in the list of arguments, and React refuses a list of arguments whose strings
+ * add up to more than a million characters ("Maximum array nesting exceeded"), whatever the
+ * request size limit says. A file between 1 and 2 MB could therefore never be reviewed.
+ */
+export async function parsePromptImport(input: {
+  kind: string;
+  csvText: string;
+}): Promise<ActionResult<{ body: string; label: string | null; problem: string | null }[]>> {
+  const kind = input?.kind;
+  const csvText = typeof input?.csvText === "string" ? input.csvText : "";
   if (!isKind(kind)) return INVALID;
   if (csvText.length > 2_000_000) return fail("The file is larger than 2 MB.", "too_large");
   const rows = parsePromptCsv(csvText);

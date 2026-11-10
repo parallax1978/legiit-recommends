@@ -1,9 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { supabasePublishableKey, supabaseUrl } from "./env";
+import { SIGN_OUT_PATH } from "@/lib/sign-out";
+import { sessionCookieOptions, supabasePublishableKey, supabaseUrl } from "./env";
 
-// Reachable without a session.
-const PUBLIC_PATHS = ["/sign-in", "/forgot-password", "/auth/confirm"];
+// Reachable without a session. Signing out is among them so that it also works for a session
+// that has just expired: the handler then only clears cookies and sends the browser to sign-in.
+const PUBLIC_PATHS = ["/sign-in", "/forgot-password", "/auth/confirm", SIGN_OUT_PATH];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
@@ -15,9 +17,17 @@ function isPublic(pathname: string): boolean {
  * checks inside every database function.
  */
 export async function updateSession(request: NextRequest): Promise<NextResponse> {
+  // Signing out is left entirely to its handler. If the session were refreshed here first, this
+  // response would set a fresh session cookie while the handler's removes it, and which of the
+  // two the browser kept would depend on the order the hosting platform merges them in.
+  if (request.nextUrl.pathname === SIGN_OUT_PATH) return NextResponse.next({ request });
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(supabaseUrl(), supabasePublishableKey(), {
+    cookieOptions: sessionCookieOptions(
+      request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol,
+    ),
     cookies: {
       getAll() {
         return request.cookies.getAll();

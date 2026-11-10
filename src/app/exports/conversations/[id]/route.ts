@@ -1,4 +1,5 @@
-import { exportContext, jsonResponse, notFoundResponse } from "@/lib/export";
+import { inChunks, rowsOf, selectAll } from "@/lib/batch";
+import { exportContext, jsonResponse, notFoundResponse, unavailableResponse } from "@/lib/export";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -8,34 +9,60 @@ export async function GET(_request: Request, context: RouteContext<"/exports/con
   const ctx = await exportContext();
   if (ctx instanceof Response) return ctx;
   if (!UUID.test(id)) return notFoundResponse();
-  const { data: run } = await ctx.supabase.from("runs").select("*").eq("id", id).maybeSingle();
+  const { data: run, error } = await ctx.supabase
+    .from("runs")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  // A read that failed is not "no such conversation".
+  if (error) return unavailableResponse();
   if (!run || !ctx.session.workspaces.some((workspace) => workspace.id === run.workspace_id))
     return notFoundResponse();
 
-  const [
-    { data: campaign },
-    { data: revision },
-    { data: turns },
-    { data: attempts },
-    { data: classifications },
-  ] = await Promise.all([
+  // A part that cannot be read fails the export. A file that looks complete while turns or
+  // classifications are missing would be worse than no file.
+  const [campaignRead, revisionRead, turns, attempts] = await Promise.all([
     ctx.supabase.from("campaigns").select("id, name").eq("id", run.campaign_id).maybeSingle(),
     ctx.supabase
       .from("campaign_revisions")
       .select("revision_number")
       .eq("id", run.revision_id)
       .maybeSingle(),
-    ctx.supabase.from("run_turns").select("*").eq("run_id", run.id).order("step_index"),
-    ctx.supabase.from("provider_attempts").select("*").eq("run_id", run.id).order("started_at"),
-    ctx.supabase
-      .from("classifications")
-      .select(
-        "subject_id, method, detector_version, inclusion, mentioned, rank, list_position, list_kind, matched_spans, reason, note, is_current, created_at",
-      )
-      .eq("campaign_id", run.campaign_id)
-      .eq("subject_type", "run_turn"),
+    rowsOf(
+      "The conversation",
+      ctx.supabase.from("run_turns").select("*").eq("run_id", run.id).order("step_index"),
+    ),
+    rowsOf(
+      "The conversation",
+      ctx.supabase
+        .from("provider_attempts")
+        .select("*")
+        .eq("run_id", run.id)
+        .order("started_at")
+        .order("id"),
+    ),
   ]);
-  const turnIds = new Set((turns ?? []).map((turn) => turn.id));
+  if (campaignRead.error || revisionRead.error) return unavailableResponse();
+  const campaign = campaignRead.data;
+  const revision = revisionRead.data;
+  const turnIds = new Set(turns.map((turn) => turn.id));
+  // Only this conversation's classifications, by the ids of its few turns. Asking for every
+  // classification of the campaign returns at most 1000 rows, which silently left most
+  // conversations of a larger campaign without their history.
+  const classifications = await inChunks([...turnIds], (chunk) =>
+    selectAll("The conversation", (from, to) =>
+      ctx.supabase
+        .from("classifications")
+        .select(
+          "subject_id, method, detector_version, inclusion, mentioned, rank, list_position, list_kind, matched_spans, reason, note, is_current, created_at",
+        )
+        .eq("subject_type", "run_turn")
+        .in("subject_id", chunk)
+        .order("created_at")
+        .order("id")
+        .range(from, to),
+    ),
+  );
 
   return jsonResponse(`conversation-${run.id}.json`, {
     exported_at: new Date().toISOString(),
@@ -67,7 +94,7 @@ export async function GET(_request: Request, context: RouteContext<"/exports/con
       restart_of: run.restart_of_run_id,
       text_removed_at: run.content_purged_at,
     },
-    turns: (turns ?? []).map((turn) => ({
+    turns: turns.map((turn) => ({
       turn: turn.step_index,
       kind: turn.step_kind,
       status: turn.status,
@@ -97,14 +124,14 @@ export async function GET(_request: Request, context: RouteContext<"/exports/con
       latency_ms: turn.latency_ms,
       started_at: turn.started_at,
       completed_at: turn.completed_at,
-      classifications: (classifications ?? [])
+      classifications: classifications
         .filter((item) => item.subject_id === turn.id)
         .map(({ subject_id: _subject, ...rest }) => rest),
     })),
-    requests: (attempts ?? [])
+    requests: attempts
       .filter((attempt) => !attempt.run_turn_id || turnIds.has(attempt.run_turn_id))
       .map((attempt) => ({
-        turn: (turns ?? []).find((turn) => turn.id === attempt.run_turn_id)?.step_index ?? null,
+        turn: turns.find((turn) => turn.id === attempt.run_turn_id)?.step_index ?? null,
         attempt: attempt.attempt_number,
         status: attempt.status,
         mode: attempt.mode,

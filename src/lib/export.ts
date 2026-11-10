@@ -1,4 +1,5 @@
 import "server-only";
+import { unstable_rethrow } from "next/navigation";
 import { getSession, type Session } from "@/lib/session";
 import { createClient, type ServerClient } from "@/lib/supabase/server";
 
@@ -16,7 +17,15 @@ export interface ExportContext {
  * the URL never grants access to another workspace's data.
  */
 export async function exportContext(): Promise<ExportContext | Response> {
-  const session = await getSession();
+  let session: Session | null;
+  try {
+    session = await getSession();
+  } catch (error) {
+    // Next's own signals (a request-time API used while prerendering) are not failures.
+    unstable_rethrow(error);
+    // The session could not be read (the database did not answer). That is not "signed out".
+    return unavailableResponse();
+  }
   if (!session)
     return new Response("Sign in to export data.", {
       status: 401,
@@ -25,11 +34,23 @@ export async function exportContext(): Promise<ExportContext | Response> {
   return { supabase: await createClient(), session };
 }
 
+/** The data could not be read just now. Distinct from "not found" and from "sign in". */
+export function unavailableResponse(): Response {
+  return new Response("The export could not be prepared right now. Try again in a moment.", {
+    status: 503,
+    headers: { "Cache-Control": "no-store", "Retry-After": "10" },
+  });
+}
+
 export function notFoundResponse(): Response {
   return new Response("Not found.", { status: 404, headers: { "Cache-Control": "no-store" } });
 }
 
-/** Reads every row of a query in pages (the Data API returns at most 1000 rows per request). */
+/**
+ * Reads every row of a query in pages (the Data API returns at most 1000 rows per request).
+ * The query's order must end in a unique column (or a unique combination): rows that tie on
+ * the order can otherwise be returned twice or not at all across two pages.
+ */
 export async function fetchAll<Row>(
   page: (from: number, to: number) => PromiseLike<{ data: Row[] | null; error: unknown }>,
   limit = EXPORT_ROW_LIMIT,

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Legiit Recommends \u2014 repeatable OpenAI conversation campaigns with independent fresh-check measurement.",
   "engines": {
-    "node": ">=22.0.0"
+    "node": "26.x"
   },
   "scripts": {
     "dev": "next dev",
@@ -35,8 +35,7 @@
     "auth:configure": "tsx scripts/configure-auth.ts",
     "fake-openai": "tsx tests/support/fake-openai-server.ts",
     "smoke:live": "tsx scripts/live-smoke.ts",
-    "deploy:supabase": "bash scripts/deploy-supabase.sh",
-    "deploy:vercel": "bash scripts/deploy-vercel.sh"
+    "deploy:supabase": "bash scripts/deploy-supabase.sh"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",

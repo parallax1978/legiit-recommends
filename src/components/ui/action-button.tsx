@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
+import { actionFailure, toastFailure } from "@/lib/action-failure";
 import type { ActionResult } from "@/lib/result";
 import { Button, type ButtonSize, type ButtonVariant } from "./button";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogTrigger } from "./dialog";
@@ -46,11 +47,9 @@ export function ActionButton({
       let result: ActionResult<unknown>;
       try {
         result = await action();
-      } catch {
-        result = {
-          ok: false,
-          message: "The request could not be completed. Check your connection and try again.",
-        };
+      } catch (error) {
+        // Passes on a redirect raised by the action; names an out-of-date page as such.
+        result = actionFailure(error);
       }
       setOpen(false);
       if (result.ok) {
@@ -59,7 +58,7 @@ export function ActionButton({
         if (redirectTo) router.push(redirectTo);
         else router.refresh();
       } else {
-        toast.error(result.message);
+        toastFailure(result);
       }
       onDone?.(result);
     });

@@ -7,6 +7,7 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import { fail, fromDbError, ok, type ActionResult } from "@/lib/result";
 import { safeNextPath } from "@/lib/safe-path";
 import { WORKSPACE_COOKIE, getIdentity, signedInWithPassword } from "@/lib/session";
+import { signInFailure } from "@/lib/sign-in-failure";
 import { createClient } from "@/lib/supabase/server";
 
 const MIN_PASSWORD = 10;
@@ -45,8 +46,9 @@ export async function signIn(
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) {
-    // One message for every failure: never reveal whether an account exists.
-    return fail("That email and password do not match an account.", "invalid_credentials");
+    const failure = signInFailure(error);
+    if (failure.log) console.error(failure.log);
+    return fail(failure.message, failure.code);
   }
   redirect(safeNextPath(formData.get("next"), "/overview"));
 }
@@ -192,8 +194,17 @@ export async function changePassword(
     password: current,
   });
   if (verified.error) {
-    if (verified.error.status === 429)
+    // Only a rejection of the password itself may say that the password is wrong.
+    const failure = signInFailure(verified.error);
+    if (failure.code === "rate_limited")
       return fail("Too many attempts. Wait a minute and try again.", "rate_limited");
+    if (failure.code !== "invalid_credentials") {
+      if (failure.log) console.error(failure.log);
+      return fail(
+        "Your current password could not be checked right now. Try again in a moment.",
+        failure.code,
+      );
+    }
     return fail("Your current password is not correct.", "invalid", {
       current_password: "Your current password is not correct.",
     });
@@ -251,13 +262,6 @@ export async function completeSetup(
   const created = await supabase.rpc("complete_owner_setup", { p_workspace_name: name });
   if (created.error) return fromDbError(created.error);
   redirect("/overview");
-}
-
-export async function signOut(): Promise<void> {
-  const supabase = await createClient();
-  await supabase.auth.signOut();
-  (await cookies()).delete(WORKSPACE_COOKIE);
-  redirect("/sign-in");
 }
 
 export async function switchWorkspace(workspaceId: string): Promise<void> {

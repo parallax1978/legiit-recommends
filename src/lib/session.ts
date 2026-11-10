@@ -80,7 +80,7 @@ export const getSession = cache(async (): Promise<Session | null> => {
   if (!identity) return null;
   const supabase = await createClient();
 
-  const [{ data: memberships }, { data: profile }] = await Promise.all([
+  const [{ data: memberships, error: membershipsError }, { data: profile }] = await Promise.all([
     supabase
       .from("workspace_members")
       .select(
@@ -90,6 +90,12 @@ export const getSession = cache(async (): Promise<Session | null> => {
       .order("created_at", { ascending: true }),
     supabase.from("profiles").select("display_name").eq("id", identity.userId).maybeSingle(),
   ]);
+  // A list that could not be read is not an empty list. Treating it as one would send a member
+  // to the "you have no workspace" screen whenever the database is briefly unreachable.
+  if (membershipsError) {
+    console.error("memberships_unreadable", membershipsError.code, membershipsError.message);
+    throw new Error("Your workspaces could not be loaded.");
+  }
 
   const workspaces: WorkspaceSummary[] = [];
   for (const membership of memberships ?? []) {

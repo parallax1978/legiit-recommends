@@ -23,6 +23,7 @@ import {
   Select,
   Textarea,
 } from "@/components/ui/form";
+import { actionFailure, toastFailure } from "@/lib/action-failure";
 import {
   saveCampaignDraft,
   type CampaignDraftInput,
@@ -352,15 +353,15 @@ export function CampaignEditor({ data }: { data: EditorData }) {
       let result: Awaited<ReturnType<typeof saveCampaignDraft>>;
       try {
         result = await saveCampaignDraft(data.campaign.id, form);
-      } catch {
-        result = {
-          ok: false,
-          message: "The draft could not be saved. Check your connection and try again.",
-        };
+      } catch (error) {
+        result = actionFailure(
+          error,
+          "The draft could not be saved. Check your connection and try again.",
+        );
       }
       if (!result.ok) {
         setFieldErrors(result.fieldErrors ?? {});
-        toast.error(result.message);
+        toastFailure(result);
         return;
       }
       const outcome = result.data as DraftSaved;

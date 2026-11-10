@@ -20,6 +20,7 @@ import { Input, Select } from "@/components/ui/form";
 import { LocalTime } from "@/components/ui/local-time";
 import { PermissionNote, Screen, Tabs, buildHref } from "@/components/ui/misc";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/table";
+import { inChunks, readError, rowsOf, selectAll } from "@/lib/batch";
 import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/format";
 import { CONVERSATION_KINDS, templateKind } from "@/lib/labels";
@@ -98,40 +99,53 @@ async function Prompts({
   const collectionFilter = first(params.collection);
   const showArchived = first(params.show) === "archived";
 
-  const [{ data: templates }, { data: usage }, { data: connections }, { data: verifiedModels }] =
-    await Promise.all([
+  // Every prompt of the workspace, read in pages, and their wording asked for in chunks: a
+  // library is expected to grow past what one response or one URL can hold.
+  const [all, usage, connections, verifiedModels] = await Promise.all([
+    selectAll("Prompts", (from, to) =>
       supabase
         .from("templates")
         .select("id, kind, label, collection, source, archived_at, updated_at, current_version_id")
         .eq("workspace_id", workspaceId)
         .neq("kind", "fresh_check")
-        .order("created_at"),
-      supabase
-        .from("campaign_revision_step_templates")
-        .select("template_id")
-        .eq("workspace_id", workspaceId),
+        .order("created_at")
+        .order("id")
+        .range(from, to),
+    ),
+    // Which prompts a campaign uses, as one value. The links themselves grow with every
+    // revision of every campaign and are not read here.
+    supabase.rpc("templates_in_use", { p_workspace_id: workspaceId }),
+    rowsOf(
+      "Connections",
       supabase
         .from("provider_connections")
         .select("id, name")
         .eq("workspace_id", workspaceId)
         .eq("status", "ok")
         .is("archived_at", null),
+    ),
+    rowsOf(
+      "Models",
       supabase
         .from("provider_models")
         .select("connection_id, model_id")
         .eq("workspace_id", workspaceId)
         .eq("verification_status", "verified")
         .eq("is_listed", true),
-    ]);
-  const all = templates ?? [];
+    ),
+  ]);
+  if (usage.error) throw readError("Prompt usage", usage.error);
   const versionIds = all
     .map((template) => template.current_version_id)
     .filter((id): id is string => Boolean(id));
-  const { data: versions } = versionIds.length
-    ? await supabase.from("template_versions").select("id, body, version").in("id", versionIds)
-    : { data: [] };
-  const versionById = new Map((versions ?? []).map((version) => [version.id, version]));
-  const used = new Set((usage ?? []).map((row) => row.template_id));
+  const versions = await inChunks(versionIds, (chunk) =>
+    rowsOf(
+      "Prompt wording",
+      supabase.from("template_versions").select("id, body, version").in("id", chunk),
+    ),
+  );
+  const versionById = new Map(versions.map((version) => [version.id, version]));
+  const used = new Set(usage.data ?? []);
 
   const counts = Object.fromEntries(
     CONVERSATION_KINDS.map((item) => [
@@ -168,10 +182,8 @@ async function Prompts({
     )
     .filter((body): body is string => Boolean(body));
 
-  const connectionName = new Map(
-    (connections ?? []).map((connection) => [connection.id, connection.name]),
-  );
-  const generatorModels: GeneratorModel[] = (verifiedModels ?? [])
+  const connectionName = new Map(connections.map((connection) => [connection.id, connection.name]));
+  const generatorModels: GeneratorModel[] = verifiedModels
     .filter((model) => connectionName.has(model.connection_id))
     .map((model) => ({
       connectionId: model.connection_id,
@@ -376,36 +388,52 @@ async function QuestionSets({
   const admin = hasRole(session.role, "admin");
   const workspaceId = session.workspace.id;
   const showArchived = first(params.show) === "archived";
-  const { data: sets } = await supabase
-    .from("probe_sets")
-    .select("id, name, description, current_version_id, archived_at, updated_at")
-    .eq("workspace_id", workspaceId)
-    .order("created_at");
-  const versionIds = (sets ?? [])
+  const sets = await selectAll("Question sets", (from, to) =>
+    supabase
+      .from("probe_sets")
+      .select("id, name, description, current_version_id, archived_at, updated_at")
+      .eq("workspace_id", workspaceId)
+      .order("created_at")
+      .order("id")
+      .range(from, to),
+  );
+  const versionIds = sets
     .map((set) => set.current_version_id)
     .filter((id): id is string => Boolean(id));
-  const [{ data: questions }, { data: versions }, { data: revisions }] = await Promise.all([
-    versionIds.length
-      ? supabase
+  const [questions, versions, revisions] = await Promise.all([
+    // A set version can hold many questions, so each chunk of versions is itself read in pages.
+    inChunks(versionIds, (chunk) =>
+      selectAll("Questions", (from, to) =>
+        supabase
           .from("probe_questions")
           .select("probe_set_version_id, position, body, is_held_out")
-          .in("probe_set_version_id", versionIds)
+          .in("probe_set_version_id", chunk)
+          .order("probe_set_version_id")
           .order("position")
-      : Promise.resolve({ data: [] as never[] }),
-    versionIds.length
-      ? supabase.from("probe_set_versions").select("id, version").in("id", versionIds)
-      : Promise.resolve({ data: [] as never[] }),
-    supabase
-      .from("campaign_revisions")
-      .select("probe_set_id")
-      .eq("workspace_id", workspaceId)
-      .not("probe_set_id", "is", null)
-      .neq("state", "discarded"),
+          .range(from, to),
+      ),
+    ),
+    inChunks(versionIds, (chunk) =>
+      rowsOf(
+        "Question sets",
+        supabase.from("probe_set_versions").select("id, version").in("id", chunk),
+      ),
+    ),
+    selectAll("Question set usage", (from, to) =>
+      supabase
+        .from("campaign_revisions")
+        .select("probe_set_id")
+        .eq("workspace_id", workspaceId)
+        .not("probe_set_id", "is", null)
+        .neq("state", "discarded")
+        .order("id")
+        .range(from, to),
+    ),
   ]);
-  const versionNumber = new Map((versions ?? []).map((version) => [version.id, version.version]));
-  const inUse = new Set((revisions ?? []).map((revision) => revision.probe_set_id));
-  const visible = (sets ?? []).filter((set) => (showArchived ? set.archived_at : !set.archived_at));
-  const archivedCount = (sets ?? []).filter((set) => set.archived_at).length;
+  const versionNumber = new Map(versions.map((version) => [version.id, version.version]));
+  const inUse = new Set(revisions.map((revision) => revision.probe_set_id));
+  const visible = sets.filter((set) => (showArchived ? set.archived_at : !set.archived_at));
+  const archivedCount = sets.filter((set) => set.archived_at).length;
 
   const newButton = (
     <QuestionSetButton
@@ -434,7 +462,7 @@ async function QuestionSets({
         the website, or if a held-out question repeats one of its initial questions.
       </Callout>
 
-      {(sets ?? []).length === 0 ? (
+      {sets.length === 0 ? (
         <EmptyState
           icon={<ScanSearch className="size-5" aria-hidden="true" />}
           title="No question sets yet"
@@ -448,7 +476,7 @@ async function QuestionSets({
       ) : (
         <ul className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {visible.map((set) => {
-            const own = (questions ?? []).filter(
+            const own = questions.filter(
               (question) => question.probe_set_version_id === set.current_version_id,
             );
             const heldOut = own.filter((question) => question.is_held_out).length;

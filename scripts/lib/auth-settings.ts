@@ -29,6 +29,8 @@ export interface AuthSettingsInput {
   minimumPasswordLength: number;
   /** Lifetime of one-time email links in seconds, as declared in supabase/config.toml. */
   linkLifetimeSeconds: number;
+  /** Digits of the one-time code behind every email link, as declared in supabase/config.toml. */
+  oneTimeCodeLength: number;
   templates: Record<EmailTemplateName, EmailTemplate>;
 }
 
@@ -66,6 +68,15 @@ export function allowListEntries(value: unknown): string[] {
 
 export function desiredAuthSettings(input: AuthSettingsInput): AuthConfig {
   const site = normalizeSiteUrl(input.siteUrl);
+  if (
+    !Number.isInteger(input.oneTimeCodeLength) ||
+    input.oneTimeCodeLength < 8 ||
+    input.oneTimeCodeLength > 10
+  ) {
+    throw new Error(
+      "The one-time code length (otp_length under [auth.email] in supabase/config.toml) must be 8 to 10 digits.",
+    );
+  }
   const settings: AuthConfig = {
     // Email links are built from the site URL (see supabase/templates), so it must be the
     // address people can actually open.
@@ -89,6 +100,11 @@ export function desiredAuthSettings(input: AuthSettingsInput): AuthConfig {
     security_update_password_require_current_password: true,
     // Long enough for an invitation to be opened the next day; the Auth server's own limit.
     mailer_otp_exp: input.linkLifetimeSeconds,
+    // The secret in every emailed link is a hash of the address and this numeric code, and the
+    // code alone is accepted as well. Anyone can request a reset for an address they know and
+    // then guess it: six digits are a million possibilities, and the Auth server allows each
+    // network address thousands of guesses a day. Ten digits is the most it supports.
+    mailer_otp_length: input.oneTimeCodeLength,
   };
   for (const name of EMAIL_TEMPLATES) {
     const template = input.templates[name];
@@ -133,12 +149,18 @@ export function describeSetting(value: unknown): string {
 export function readAuthDeclarations(configToml: string): {
   minimumPasswordLength: number;
   linkLifetimeSeconds: number;
+  oneTimeCodeLength: number;
   templates: Record<string, { subject: string; contentPath: string }>;
 } {
   const length = /^minimum_password_length\s*=\s*(\d+)\s*$/m.exec(configToml);
   if (!length) throw new Error("supabase/config.toml does not declare minimum_password_length.");
-  const lifetime = /^otp_expiry\s*=\s*(\d+)\s*$/m.exec(configToml);
+  // Both values live under [auth.email]; [auth.sms] has an otp_length of its own.
+  const email = /^\[auth\.email\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(configToml)?.[1] ?? "";
+  const lifetime = /^otp_expiry\s*=\s*(\d+)\s*$/m.exec(email);
   if (!lifetime) throw new Error("supabase/config.toml does not declare [auth.email] otp_expiry.");
+  const codeLength = /^otp_length\s*=\s*(\d+)\s*$/m.exec(email);
+  if (!codeLength)
+    throw new Error("supabase/config.toml does not declare [auth.email] otp_length.");
   const templates: Record<string, { subject: string; contentPath: string }> = {};
   const section = /^\[auth\.email\.template\.([a-z_]+)\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/gm;
   for (const match of configToml.matchAll(section)) {
@@ -152,6 +174,7 @@ export function readAuthDeclarations(configToml: string): {
   return {
     minimumPasswordLength: Number(length[1]),
     linkLifetimeSeconds: Number(lifetime[1]),
+    oneTimeCodeLength: Number(codeLength[1]),
     templates,
   };
 }

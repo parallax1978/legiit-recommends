@@ -11,6 +11,7 @@ import { Select } from "@/components/ui/form";
 import { LocalTime } from "@/components/ui/local-time";
 import { Pagination, Screen } from "@/components/ui/misc";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/table";
+import { PAGE_OUT_OF_RANGE, readError } from "@/lib/batch";
 import { formatDate, formatUsd } from "@/lib/format";
 import { humanize, phaseLabel } from "@/lib/labels";
 import { first, pageNumber, uuidParam, type SearchParams } from "@/lib/params";
@@ -89,7 +90,9 @@ async function FreshChecks({ searchParams }: { searchParams: Promise<SearchParam
       { count: "exact" },
     )
     .eq("campaign_id", campaign.id)
+    // Newest first; the id breaks ties so a check cannot appear on two pages.
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
   if (phase) list = list.eq("phase", phase as "baseline" | "daily" | "final");
   if (questions) list = list.eq("is_held_out", questions === "held_out");
@@ -110,7 +113,10 @@ async function FreshChecks({ searchParams }: { searchParams: Promise<SearchParam
       .order("observed_on", { ascending: false }),
     supabase.from("campaigns").select("active_revision_id").eq("id", campaign.id).maybeSingle(),
   ]);
-  if (metrics.error || checks.error) throw new Error("Fresh checks could not be loaded.");
+  // A page number past the end of the list is an empty page, not a failure.
+  const pastEnd = checks.error?.code === PAGE_OUT_OF_RANGE;
+  if (metrics.error) throw readError("Fresh checks", metrics.error);
+  if (checks.error && !pastEnd) throw readError("Fresh checks", checks.error);
   const { data: zoneRow } = revision.data?.active_revision_id
     ? await supabase
         .from("campaign_revisions")

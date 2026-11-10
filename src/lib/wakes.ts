@@ -61,7 +61,7 @@ export function describeWakes(
         ? "The worker function was not found at the stored address. Deploy it with npm run deploy:supabase."
         : code === 503
           ? "The worker starts but cannot reach the database with its service key, so it cannot claim any work. Check the worker function's logs in the Supabase dashboard; running npm run deploy:supabase redeploys it with the project's current keys."
-          : "The worker is not answering the database's wake-ups, so queued work is not being sent. Check the worker function's logs in the Supabase dashboard, then run npm run queues:activate -- --status.";
+          : "The worker is not answering the database's wake-ups, so queued work is not being sent. Check the worker function's logs in the Supabase dashboard, then run npm run queues:activate -- --status against this project (with the same ENV_FILE as the deploy, if you use one): it reports the schedules and the worker's answer to one wake-up.";
   return {
     ok: false,
     detail: `${troubled} of ${plural(wakes.requested, "wake-up")} failed (${cause})`,

@@ -3,6 +3,7 @@ import type { FakeOpenAI } from "../support/fake-openai.ts";
 import {
   TARGET,
   addPrice,
+  anonClient,
   closeConnections,
   createCampaign,
   createConnection,
@@ -341,6 +342,107 @@ describe("configuration revisions", () => {
       }),
       "invalid_template",
     );
+  });
+
+  it("imports a large file of long prompts well inside the request time limit, skipping duplicates", async () => {
+    const workspace = await createWorkspace();
+    const sentence = " Please weigh price, quality and service for {{category}}.";
+    const long = (index: number) =>
+      `Import ${index}: what would you suggest for {{category}}?${sentence.repeat(65)}`;
+    const importRows = (bodies: string[]) =>
+      rpc<string[]>(workspace.owner.client, "create_templates", {
+        p_workspace_id: workspace.id,
+        p_kind: "extra_step",
+        p_items: bodies.map((body) => ({ body })),
+        p_source: "csv_import",
+        p_skip_duplicates: true,
+      });
+    expect(long(0).length).toBeGreaterThan(3700);
+    expect(long(0).length).toBeLessThanOrEqual(4000);
+
+    // 300 prompts near the length limit, through the signed-in client and its 8 second limit.
+    // Comparing every new prompt with every existing one, renormalising each time, took longer
+    // than that and failed the whole import.
+    const first = Array.from({ length: 300 }, (_, index) => long(index));
+    const started = Date.now();
+    expect(await importRows(first)).toHaveLength(300);
+    expect(Date.now() - started).toBeLessThan(6000);
+
+    // A second file: 200 new prompts, 100 the workspace already has (in other letter case and
+    // other whitespace, same length), and each new one a second time with other whitespace.
+    // Only the 200 new ones are added, once each.
+    const second = [
+      ...Array.from({ length: 200 }, (_, index) => long(300 + index)),
+      ...Array.from({ length: 100 }, (_, index) =>
+        long(index)
+          .replace(/Please/g, "PLEASE")
+          .replace(/ weigh/g, "\nweigh"),
+      ),
+      ...Array.from({ length: 200 }, (_, index) =>
+        long(300 + index).replace(/ PLEASE| Please/g, "\tPlease"),
+      ),
+    ];
+    const again = Date.now();
+    expect(await importRows(second)).toHaveLength(200);
+    expect(Date.now() - again).toBeLessThan(6000);
+    const stored = await sql<{ n: string; distinct_bodies: string }>(
+      "select count(*)::text as n, count(distinct v.body)::text as distinct_bodies from public.templates t join public.template_versions v on v.id = t.current_version_id where t.workspace_id = $1 and t.kind = 'extra_step'",
+      [workspace.id],
+    );
+    expect(stored[0]).toEqual({ n: "500", distinct_bodies: "500" });
+
+    // The prompts of one import keep the order of the file wherever lists sort by creation
+    // time (the library, the campaign editor, the CSV export).
+    const listed = await sql<{ body: string }>(
+      "select v.body from public.templates t join public.template_versions v on v.id = t.current_version_id where t.workspace_id = $1 and t.kind = 'extra_step' order by t.created_at, t.id limit 300",
+      [workspace.id],
+    );
+    expect(listed.map((row) => row.body)).toEqual(first);
+
+    // An archived prompt does not count as a duplicate, as before.
+    await sql(
+      "update public.templates set archived_at = now() where workspace_id = $1 and id = (select t.id from public.templates t join public.template_versions v on v.id = t.current_version_id where t.workspace_id = $1 and v.body = $2)",
+      [workspace.id, long(0)],
+    );
+    expect(await importRows([long(0), long(1)])).toHaveLength(1);
+  });
+
+  it("reports which prompts a campaign uses in one answer, to members only", async () => {
+    const workspace = await createWorkspace();
+    const outsider = await createWorkspace();
+    const connection = await createConnection(workspace, fake);
+    const campaign = await createCampaign(workspace, connection);
+    // A second revision copies every link: the answer must not grow with history.
+    await launch(workspace, campaign);
+    const unused = await rpc<string[]>(workspace.owner.client, "create_templates", {
+      p_workspace_id: workspace.id,
+      p_kind: "extra_step",
+      p_items: [{ body: "Is there anything else worth knowing about {{category}}?" }],
+    });
+
+    const linked = await sql<{ template_id: string }>(
+      "select distinct template_id from public.campaign_revision_step_templates where workspace_id = $1",
+      [workspace.id],
+    );
+    expect(linked.length).toBeGreaterThan(0);
+    const inUse = await rpc<string[]>(workspace.owner.client, "templates_in_use", {
+      p_workspace_id: workspace.id,
+    });
+    expect([...inUse].sort()).toEqual(linked.map((row) => row.template_id).sort());
+    expect(inUse).not.toContain(unused[0]);
+
+    // Another workspace's owner learns nothing, not even whether the workspace exists.
+    await expect(
+      rpc(outsider.owner.client, "templates_in_use", { p_workspace_id: workspace.id }),
+    ).rejects.toThrow(/not found or access denied/);
+    expect(
+      await rpc<string[]>(outsider.owner.client, "templates_in_use", {
+        p_workspace_id: outsider.id,
+      }),
+    ).toEqual([]);
+    await expect(
+      rpc(anonClient(), "templates_in_use", { p_workspace_id: workspace.id }),
+    ).rejects.toThrow();
   });
 
   it("supports duplicate, discard, archive and delete with the right permissions", async () => {

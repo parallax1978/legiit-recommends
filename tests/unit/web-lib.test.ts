@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   NO_VALUE,
   describeWeekdays,
@@ -16,7 +16,10 @@ import {
   formatAxisTick,
   formatChartValue,
 } from "@/components/charts/theme";
+import { ID_CHUNK, PAGE_SIZE, inChunks, rowsOf, selectAll } from "@/lib/batch";
 import { first, likePattern, pageNumber, uuidParam } from "@/lib/params";
+import { signInFailure } from "@/lib/sign-in-failure";
+import { sessionCookieOptions } from "@/lib/supabase/env";
 import { describeWakes } from "@/lib/wakes";
 import { isValidTimeZone, offsetMinutes, utcToZonedInput, zonedInputToUtc } from "@/lib/timezone";
 
@@ -274,5 +277,174 @@ describe("URL parameters", () => {
   it("escapes search text used in a pattern match", () => {
     expect(likePattern("50%_off")).toBe("%50\\%\\_off%");
     expect(likePattern("a,b(c)")).toBe("%a b c %");
+  });
+});
+
+describe("reading more rows than fit in one request", () => {
+  const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+  it("asks for a long id list in chunks that fit a request URL", async () => {
+    const ids = Array.from({ length: 530 }, (_, index) => uuid(index));
+    const seen: string[][] = [];
+    const rows = await inChunks(ids, async (chunk) => {
+      seen.push(chunk);
+      return chunk.map((id) => ({ id }));
+    });
+    // Every id exactly once, in order, never more than ID_CHUNK at a time.
+    expect(rows.map((row) => row.id)).toEqual(ids);
+    expect(seen.map((chunk) => chunk.length)).toEqual([100, 100, 100, 100, 100, 30]);
+    expect(Math.max(...seen.map((chunk) => chunk.length))).toBeLessThanOrEqual(ID_CHUNK);
+    // The filter of one chunk stays far below the roughly 8,000 characters gateways accept.
+    expect(`id=in.(${seen[0]!.join(",")})`.length).toBeLessThan(4000);
+  });
+
+  it("asks for each id once and for nothing when there are no ids", async () => {
+    let calls = 0;
+    const rows = await inChunks([uuid(1), uuid(2), uuid(1), uuid(2)], async (chunk) => {
+      calls += 1;
+      return chunk;
+    });
+    expect(rows).toEqual([uuid(1), uuid(2)]);
+    expect(calls).toBe(1);
+    expect(await inChunks([], async () => [1])).toEqual([]);
+  });
+
+  it("fails as a whole when one chunk cannot be read, instead of returning part of the rows", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ids = Array.from({ length: 250 }, (_, index) => uuid(index));
+    await expect(
+      inChunks(ids, (chunk) =>
+        rowsOf(
+          "Prompt wording",
+          Promise.resolve(
+            chunk.includes(uuid(120))
+              ? { data: null, error: { message: "414 Request-URI Too Large" } }
+              : { data: chunk.map((id) => ({ id })), error: null },
+          ),
+        ),
+      ),
+    ).rejects.toThrow("Prompt wording could not be loaded.");
+    // The screen only says that something could not be loaded; the server log keeps the reason.
+    expect(logged).toHaveBeenCalledWith(
+      "read_failed",
+      "Prompt wording",
+      "",
+      "414 Request-URI Too Large",
+    );
+    logged.mockRestore();
+  });
+
+  it("reads every page of a long list and stops at the first short page", async () => {
+    const total = PAGE_SIZE * 2 + 17;
+    const ranges: [number, number][] = [];
+    const rows = await selectAll("Prompts", (from, to) => {
+      ranges.push([from, to]);
+      const data = Array.from(
+        { length: Math.max(0, Math.min(to, total - 1) - from + 1) },
+        (_, i) => ({
+          n: from + i,
+        }),
+      );
+      return Promise.resolve({ data, error: null });
+    });
+    expect(rows).toHaveLength(total);
+    expect(rows[0]).toEqual({ n: 0 });
+    expect(rows.at(-1)).toEqual({ n: total - 1 });
+    expect(ranges).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [2000, 2999],
+    ]);
+  });
+
+  it("stops at its row limit and treats a failed page as an error, not as the end", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    let pages = 0;
+    const capped = await selectAll(
+      "Prompts",
+      (from, to) => {
+        pages += 1;
+        return Promise.resolve({
+          data: Array.from({ length: to - from + 1 }, (_, i) => from + i),
+          error: null,
+        });
+      },
+      3000,
+    );
+    expect(capped).toHaveLength(3000);
+    expect(pages).toBe(3);
+
+    await expect(
+      selectAll("Prompts", (from) =>
+        Promise.resolve(
+          from === 0
+            ? { data: Array.from({ length: PAGE_SIZE }, (_, i) => i), error: null }
+            : { data: null, error: { message: "timeout" } },
+        ),
+      ),
+    ).rejects.toThrow("Prompts could not be loaded.");
+    expect(logged).toHaveBeenCalledWith("read_failed", "Prompts", "", "timeout");
+    logged.mockRestore();
+    expect(await rowsOf("Prompts", Promise.resolve({ data: null, error: null }))).toEqual([]);
+  });
+});
+
+describe("sign-in failures", () => {
+  it("says the credentials do not match only when the Auth server rejected them", () => {
+    for (const error of [
+      { status: 400, code: "invalid_credentials" },
+      { status: 400, code: "email_not_confirmed" },
+      { status: 422, code: "validation_failed" },
+    ]) {
+      const failure = signInFailure(error);
+      expect(failure.code).toBe("invalid_credentials");
+      expect(failure.message).toBe("That email and password do not match an account.");
+      // Nothing to investigate: this is the ordinary wrong-password case.
+      expect(failure.log).toBeNull();
+    }
+  });
+
+  it("does not blame the password when the service is rate limiting or unavailable", () => {
+    const limited = signInFailure({ status: 429, code: "over_request_rate_limit" });
+    expect(limited.code).toBe("rate_limited");
+    expect(limited.message).toMatch(/Too many sign-in attempts/);
+    expect(limited.log).toBe("sign_in_rate_limited over_request_rate_limit");
+
+    for (const error of [
+      { status: 503, code: "unexpected_failure" },
+      { status: 500 },
+      { status: 0, name: "AuthRetryableFetchError" },
+      { name: "AuthRetryableFetchError" },
+      {},
+      // Refusals from in front of the Auth server (a gateway rejecting the app's own API key)
+      // say nothing about the person's password.
+      { status: 401, name: "AuthApiError" },
+      { status: 403 },
+      { status: 404 },
+    ]) {
+      const failure = signInFailure(error);
+      expect(failure.code).toBe("unavailable");
+      expect(failure.message).toBe("Sign-in is temporarily unavailable. Try again in a moment.");
+      expect(failure.log).toMatch(/^sign_in_unavailable \d+/);
+    }
+    // None of the messages says anything about whether an account exists.
+    const messages = [{ status: 400 }, { status: 429 }, { status: 503 }].map(
+      (error) => signInFailure(error).message,
+    );
+    for (const message of messages)
+      expect(message).not.toMatch(/no account|not registered|exists/i);
+  });
+});
+
+describe("session cookie", () => {
+  it("is Secure exactly when the page is served over HTTPS", () => {
+    for (const https of ["https", "https:", "HTTPS", "https,http", " https , http"]) {
+      expect(sessionCookieOptions(https)).toEqual({ secure: true });
+    }
+    // A production build opened over plain HTTP (local `next start`, the browser tests) must
+    // still get a cookie the browser will keep.
+    for (const plain of ["http", "http:", "http,https", "", null, undefined]) {
+      expect(sessionCookieOptions(plain)).toEqual({ secure: false });
+    }
   });
 });

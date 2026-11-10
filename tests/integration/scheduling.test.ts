@@ -693,4 +693,66 @@ describe("queue activation", () => {
       await sql("delete from app_private.worker_wakes");
     }
   });
+
+  it("reports the schedules to operator scripts, and activation never resumes a paused one", async () => {
+    const workspace = await createWorkspace();
+    type Job = { name: string; present: boolean; active: boolean; schedule: string | null };
+    type Status = {
+      jobs: Job[];
+      planner: { seconds_since_run: number | null; last_error: string | null } | null;
+    };
+    const status = () => rpc<Status>(admin(), "svc_schedule_status");
+    const job = async (name: string) => (await status()).jobs.find((item) => item.name === name);
+    const activate = () =>
+      rpc(admin(), "svc_configure_worker", {
+        p_functions_base_url: "http://kong:8000",
+        p_worker_secret: "s".repeat(40),
+      });
+
+    // This suite runs with all three schedules paused, and that is exactly what is reported.
+    expect((await status()).jobs).toEqual([
+      { name: "lr-dispatch", present: true, active: false, schedule: "10 seconds" },
+      { name: "lr-maintenance", present: true, active: false, schedule: "17 3 * * *" },
+      { name: "lr-plan", present: true, active: false, schedule: "* * * * *" },
+    ]);
+
+    // The planner's last run is what shows whether pg_cron is firing.
+    await tick();
+    const planner = (await status()).planner;
+    expect(planner?.last_error).toBeNull();
+    expect(planner?.seconds_since_run).toBeLessThan(60);
+
+    try {
+      // Activation is what every deployment runs. It keeps a paused schedule paused: resuming
+      // one can start paid work, so that is never a side effect of deploying.
+      await activate();
+      expect((await status()).jobs.map((item) => item.active)).toEqual([false, false, false]);
+
+      // A schedule that was removed is reported as missing, and activation puts it back.
+      await sql("select cron.unschedule('lr-maintenance')");
+      expect(await job("lr-maintenance")).toEqual({
+        name: "lr-maintenance",
+        present: false,
+        active: false,
+        schedule: null,
+      });
+      await activate();
+      expect(await job("lr-maintenance")).toEqual({
+        name: "lr-maintenance",
+        present: true,
+        active: true,
+        schedule: "17 3 * * *",
+      });
+
+      // Browser roles cannot read it.
+      await expect(rpc(workspace.owner.client, "svc_schedule_status")).rejects.toThrow();
+    } finally {
+      await sql(
+        "delete from vault.secrets where name in ('lr_functions_base_url', 'lr_worker_secret')",
+      );
+      await sql(
+        "select cron.alter_job(jobid, active := false) from cron.job where jobname like 'lr-%'",
+      );
+    }
+  });
 });

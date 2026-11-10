@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { Logo } from "@/components/brand/logo";
 import {
   Menu,
@@ -26,8 +26,10 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "@/components/ui/dialog";
-import { signOut, switchWorkspace } from "@/lib/actions/auth";
+import { actionFailure, toastFailure } from "@/lib/action-failure";
+import { switchWorkspace } from "@/lib/actions/auth";
 import { cn } from "@/lib/cn";
+import { submitSignOut } from "@/lib/sign-out";
 import { LiveRefresh } from "./live-refresh";
 
 export interface FrameWorkspace {
@@ -94,6 +96,7 @@ function WorkspaceSwitcher({
   workspace: FrameWorkspace;
   workspaces: FrameWorkspace[];
 }) {
+  const [, startTransition] = useTransition();
   const body = (
     <span className="flex min-w-0 flex-1 flex-col text-left">
       <span className="text-ink truncate text-[13px] font-semibold">{workspace.name}</span>
@@ -122,7 +125,17 @@ function WorkspaceSwitcher({
           <MenuItem
             key={option.id}
             disabled={option.id === workspace.id}
-            onSelect={() => void switchWorkspace(option.id)}
+            onSelect={() =>
+              // In a transition, so the redirect of a successful switch is followed and a failure
+              // (an out-of-date tab, no connection) is said out loud instead of doing nothing.
+              startTransition(async () => {
+                try {
+                  await switchWorkspace(option.id);
+                } catch (error) {
+                  toastFailure(actionFailure(error));
+                }
+              })
+            }
           >
             <span className="flex min-w-0 flex-col">
               <span className="truncate font-medium">{option.name}</span>
@@ -165,7 +178,7 @@ function UserMenu({ user }: { user: AppFrameProps["user"] }) {
             Account settings
           </Link>
         </MenuItem>
-        <MenuItem onSelect={() => void signOut()}>
+        <MenuItem onSelect={submitSignOut}>
           <LogOut className="text-ink-muted size-4" aria-hidden="true" />
           Sign out
         </MenuItem>

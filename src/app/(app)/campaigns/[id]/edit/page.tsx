@@ -6,6 +6,7 @@ import { CampaignStatusBadge } from "@/components/status";
 import { ButtonLink } from "@/components/ui/button";
 import { Callout, PageHeader } from "@/components/ui/card";
 import { Screen } from "@/components/ui/misc";
+import { inChunks, readError, rowsOf, selectAll } from "@/lib/batch";
 import { first, type SearchParams } from "@/lib/params";
 import {
   loadCampaign,
@@ -123,12 +124,16 @@ async function EditCampaign({
   ] = await Promise.all([
     loadRevision(supabase, revisionId),
     loadRevisionSteps(supabase, revisionId),
-    supabase
-      .from("templates")
-      .select("id, kind, label, collection, archived_at, current_version_id")
-      .eq("workspace_id", workspaceId)
-      .neq("kind", "fresh_check")
-      .order("created_at"),
+    selectAll("Prompts", (from, to) =>
+      supabase
+        .from("templates")
+        .select("id, kind, label, collection, archived_at, current_version_id")
+        .eq("workspace_id", workspaceId)
+        .neq("kind", "fresh_check")
+        .order("created_at")
+        .order("id")
+        .range(from, to),
+    ),
     supabase
       .from("provider_connections")
       .select("id, name, status, max_concurrent_requests")
@@ -141,37 +146,57 @@ async function EditCampaign({
       .eq("workspace_id", workspaceId)
       .eq("verification_status", "verified")
       .order("model_id"),
-    supabase
-      .from("probe_sets")
-      .select("id, name, current_version_id, archived_at")
-      .eq("workspace_id", workspaceId)
-      .order("created_at"),
+    selectAll("Question sets", (from, to) =>
+      supabase
+        .from("probe_sets")
+        .select("id, name, current_version_id, archived_at")
+        .eq("workspace_id", workspaceId)
+        .order("created_at")
+        .order("id")
+        .range(from, to),
+    ),
     supabase.rpc("effective_prices", { p_workspace_id: workspaceId }),
     supabase.rpc("campaign_launch_check", { p_campaign_id: campaign.id }),
     supabase.rpc("campaign_plan_preview", { p_campaign_id: campaign.id }),
   ]);
-  if (checkResult.error || previewResult.error)
-    throw new Error("The campaign could not be loaded.");
+  // A list that could not be read is not an empty list: the editor would otherwise claim that
+  // there is no connection, no verified model or no price.
+  const failed =
+    connectionsResult.error ??
+    modelsResult.error ??
+    pricesResult.error ??
+    checkResult.error ??
+    previewResult.error;
+  if (failed) throw readError("The campaign", failed);
 
-  const allTemplates = templatesResult.data ?? [];
+  const allTemplates = templatesResult;
   const versionIds = allTemplates
     .map((template) => template.current_version_id)
     .filter((value): value is string => Boolean(value));
-  const setVersionIds = (probeSetsResult.data ?? [])
+  const setVersionIds = probeSetsResult
     .map((set) => set.current_version_id)
     .filter((value): value is string => Boolean(value));
-  const [{ data: versions }, { data: questions }] = await Promise.all([
-    versionIds.length
-      ? supabase.from("template_versions").select("id, body").in("id", versionIds)
-      : Promise.resolve({ data: [] as { id: string; body: string }[] }),
-    setVersionIds.length
-      ? supabase
+  // Asked for in chunks: a library of a few hundred prompts no longer fits in one request URL.
+  const [versions, questions] = await Promise.all([
+    inChunks(versionIds, (chunk) =>
+      rowsOf(
+        "Prompt wording",
+        supabase.from("template_versions").select("id, body").in("id", chunk),
+      ),
+    ),
+    inChunks(setVersionIds, (chunk) =>
+      selectAll("Questions", (from, to) =>
+        supabase
           .from("probe_questions")
           .select("probe_set_version_id, is_held_out")
-          .in("probe_set_version_id", setVersionIds)
-      : Promise.resolve({ data: [] as { probe_set_version_id: string; is_held_out: boolean }[] }),
+          .in("probe_set_version_id", chunk)
+          .order("probe_set_version_id")
+          .order("position")
+          .range(from, to),
+      ),
+    ),
   ]);
-  const bodyByVersion = new Map((versions ?? []).map((version) => [version.id, version.body]));
+  const bodyByVersion = new Map(versions.map((version) => [version.id, version.body]));
   const selectedIds = new Set(
     steps.flatMap((step) => step.wordings.map((wording) => wording.templateId)),
   );
@@ -196,10 +221,10 @@ async function EditCampaign({
       priced: priced.has(model.model_id),
       listed: model.is_listed,
     }));
-  const probeSets = (probeSetsResult.data ?? [])
+  const probeSets = probeSetsResult
     .filter((set) => !set.archived_at || set.id === revision.probe_set_id)
     .map((set) => {
-      const own = (questions ?? []).filter(
+      const own = questions.filter(
         (question) => question.probe_set_version_id === set.current_version_id,
       );
       return {

@@ -15,8 +15,11 @@
  * By default all pending files and their history records are sent as one request, which
  * Postgres runs as a single transaction: either every migration of the deployment is applied
  * or none is, so a half-migrated database (for example tables created but the API lock-down
- * not yet reached) cannot be left behind. When something fails, the same statements are
- * replayed file by file inside transactions that are rolled back, to name the failing file.
+ * not yet reached) cannot be left behind. When the request fails, the history table is read
+ * again and the outcome is reported from what it records. If the database rejected a statement,
+ * the same statements are replayed file by file inside transactions that are rolled back, to
+ * name the failing file; a failure of the request itself (too large, a gateway timeout, a lost
+ * reply) is reported as that and blames no file.
  * Use --per-file when one file has to be committed before the next can run (a new enum value
  * that a later file uses). Each file is still a transaction together with its history record,
  * so statements that cannot run inside one at all (CREATE INDEX CONCURRENTLY, VACUUM) are not
@@ -33,6 +36,7 @@ import { fail, loadEnvFiles, parseArgs } from "./lib/env";
 import { ManagementError, managementClient, type ManagementClient } from "./lib/management";
 import {
   HISTORY_TABLE_SQL,
+  classifyApplyFailure,
   migrationRequestSql,
   parseMigrationFileName,
   planMigrations,
@@ -67,6 +71,19 @@ function batchSql(
 
 const reasonOf = (error: unknown): string =>
   error instanceof ManagementError ? error.message : String(error);
+
+const HISTORY_EXISTS_SQL =
+  "select to_regclass('supabase_migrations.schema_migrations') is not null as exists";
+
+/** The versions the project records as applied. Empty when it has no history table yet. */
+async function appliedVersions(api: ManagementClient): Promise<string[] | null> {
+  const history = await api.sql<{ exists: boolean }>(HISTORY_EXISTS_SQL);
+  if (history[0]?.exists !== true) return null;
+  const rows = await api.sql<{ version: string }>(
+    "select version from supabase_migrations.schema_migrations order by version",
+  );
+  return rows.map((row) => row.version);
+}
 
 /** Runs the batch and always rolls it back. Returns null when every statement succeeded. */
 async function rehearse(
@@ -105,17 +122,9 @@ async function main() {
   const api = managementClient();
   const local = readLocalMigrations();
 
-  const history = await api.sql<{ exists: boolean }>(
-    "select to_regclass('supabase_migrations.schema_migrations') is not null as exists",
-  );
-  const hasHistory = history[0]?.exists === true;
-  const applied = hasHistory
-    ? (
-        await api.sql<{ version: string }>(
-          "select version from supabase_migrations.schema_migrations order by version",
-        )
-      ).map((row) => row.version)
-    : [];
+  const recordedBefore = await appliedVersions(api);
+  const hasHistory = recordedBefore !== null;
+  const applied = recordedBefore ?? [];
 
   const plan = planMigrations(local, applied);
   console.log(
@@ -178,11 +187,51 @@ async function main() {
     console.log("done");
   } catch (error) {
     console.log("FAILED");
-    const failure = await locateFailure(api, plan.pending, !hasHistory).catch(() => null);
+    const status = error instanceof ManagementError ? error.status : null;
+    const pendingVersions = plan.pending.map((migration) => migration.version);
+    // What the project records now is the evidence; the error alone is not. A reply can be lost
+    // after the transaction committed, and a gateway can refuse a request no file is to blame for.
+    const recordedNow = await appliedVersions(api).catch(() => undefined);
+    if (recordedNow === undefined) {
+      fail(
+        `The request failed (${reasonOf(error)}) and the project's migration history could not ` +
+          "be read afterwards, so it is not known whether anything was applied. Run " +
+          "`npm run db:push:api -- --dry-run` to see what the project records.",
+      );
+    }
+    const verdict = classifyApplyFailure(status, pendingVersions, recordedNow ?? []);
+    if (verdict.outcome === "applied") {
+      console.log(
+        `\nThe request reported a failure (${reasonOf(error)}), but the project records all ` +
+          `${plan.pending.length} migration(s) as applied: the reply was lost, the work was not.\n`,
+      );
+      return;
+    }
+    if (verdict.outcome === "partial") {
+      fail(
+        `The request failed (${reasonOf(error)}) and the project records only some of the ` +
+          `pending migrations: ${verdict.recorded.join(", ")}. One transaction cannot do that, so ` +
+          "the history was changed by something else at the same time. Compare " +
+          "`npm run db:push:api -- --dry-run` with the database before applying more.",
+      );
+    }
+    if (verdict.outcome === "sql_error") {
+      const failure = await locateFailure(api, plan.pending, !hasHistory).catch(() => null);
+      fail(
+        "Nothing was applied: the whole deployment was rolled back.\n" +
+          (failure ? `${failure.file} failed:\n${failure.reason}` : reasonOf(error)) +
+          "\nFix the file and run the command again.",
+      );
+    }
     fail(
-      "Nothing was applied: the whole deployment was rolled back.\n" +
-        (failure ? `${failure.file} failed:\n${failure.reason}` : reasonOf(error)) +
-        "\nFix the file and run the command again.",
+      `The request did not go through (${status === null ? "no reply" : `HTTP ${status}`}: ${reasonOf(error)}). ` +
+        "No migration file is at fault, and none of the pending migrations is recorded as applied." +
+        (verdict.tooLarge
+          ? "\nThe request was too large to send as one: run `npm run db:push:api -- --per-file`."
+          : verdict.mayStillFinish
+            ? "\nThe database may still be working on them. Wait a minute, then run " +
+              "`npm run db:push:api -- --dry-run`: if they are still pending, run the command again."
+            : "\nRun the command again."),
     );
   }
   console.log(`\nApplied ${plan.pending.length} migration(s).\n`);

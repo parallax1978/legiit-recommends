@@ -17,6 +17,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "@/components/ui/dialog";
+import { actionFailure, toastFailure } from "@/lib/action-failure";
 import {
   deleteCampaign,
   discardCampaignDraft,
@@ -73,15 +74,12 @@ export function CampaignRowMenu({
       let result: ActionResult<unknown>;
       try {
         result = await action();
-      } catch {
-        result = {
-          ok: false,
-          message: "The request could not be completed. Check your connection and try again.",
-        };
+      } catch (error) {
+        result = actionFailure(error);
       }
       setConfirm(null);
       if (!result.ok) {
-        toast.error(result.message);
+        toastFailure(result);
         return;
       }
       if (result.message) toast.success(result.message);

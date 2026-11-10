@@ -17,9 +17,12 @@
  * SUPABASE_FUNCTIONS_BASE_URL overrides the URL the database calls; locally the database
  * reaches the gateway at http://kong:8000.
  *
- * Pass --status to only report the current state (it still sends the one wake-up), or
- * --no-check to store the settings without the wake-up (the deploy script does this before the
- * worker function is deployed, and checks afterwards).
+ * Pass --status to check without storing anything: it reports the three schedules (failing
+ * when one is missing or paused, or when the every-minute planner is not running), runs one
+ * dispatch pass (the same one the lr-dispatch schedule runs every ten seconds) and sends the
+ * one wake-up. Pass --no-check to store the settings without any check (the deploy script does
+ * this before the worker function is deployed, and checks afterwards), or --preflight to only
+ * prove that this machine can reach the database with the project's service key.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -33,6 +36,7 @@ import {
   requireEnv,
   supabaseUrl,
 } from "./lib/env";
+import { describeJobs, plannerState, scheduleProblems, type ScheduleStatus } from "./lib/schedules";
 
 interface WakeResult {
   done: boolean;
@@ -47,6 +51,15 @@ function isAccepted(result: WakeResult): boolean {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * True for the answers the Data API gives while it reloads its schema cache: the function is
+ * not known yet (PGRST202), or the service is not ready (503, PGRST000 to PGRST003).
+ */
+function isSchemaLoading(result: { status: number; error: { code?: string } | null }): boolean {
+  const code = result.error?.code ?? "";
+  return result.status === 503 || code === "PGRST202" || /^PGRST00[0-3]$/.test(code);
+}
 
 /** One wake-up from the database, and the worker's answer to it. */
 async function wakeOnce(admin: SupabaseClient): Promise<WakeResult> {
@@ -101,11 +114,73 @@ async function checkWake(admin: SupabaseClient): Promise<void> {
   );
 }
 
+async function readSchedules(admin: SupabaseClient): Promise<ScheduleStatus> {
+  const read = await admin.rpc("svc_schedule_status");
+  if (read.error) fail(describeDbError(read.error));
+  return read.data as unknown as ScheduleStatus;
+}
+
+/**
+ * Reports the schedules and stops when one is missing or paused. With `waitForPlanner` it also
+ * requires evidence that pg_cron is firing: the planner runs every minute, so a run within the
+ * last couple of minutes, waiting for the next one if need be.
+ */
+async function checkSchedules(admin: SupabaseClient, waitForPlanner: boolean): Promise<void> {
+  let status = await readSchedules(admin);
+  console.log(`Schedules: ${describeJobs(status)}`);
+  const problems = scheduleProblems(status);
+  if (problems.length > 0) fail(problems.join("\n"));
+  if (!waitForPlanner) return;
+
+  let planner = plannerState(status);
+  if (planner.state === "never" || planner.state === "stale") {
+    console.log("Waiting for the planner schedule to run (it runs every minute) …");
+    for (let attempt = 0; attempt < 20 && planner.state !== "fresh"; attempt += 1) {
+      await sleep(5000);
+      status = await readSchedules(admin);
+      planner = plannerState(status);
+      if (planner.state === "failing") break;
+    }
+  }
+  if (planner.state === "fresh") {
+    console.log(`Planner schedule: last ran ${planner.seconds} s ago.`);
+    return;
+  }
+  if (planner.state === "failing") {
+    fail(
+      `The planner schedule runs but its last run failed: ${planner.error}\n` +
+        "Until it succeeds, nothing new is planned for launched campaigns.",
+    );
+  }
+  fail(
+    (planner.state === "never"
+      ? "The lr-plan schedule is active but has never run."
+      : `The lr-plan schedule is active but last ran ${planner.seconds} s ago.`) +
+      " pg_cron does not seem to be running the schedules: look at the run history under " +
+      "Dashboard → Integrations → Cron. Until it runs, nothing is planned for launched campaigns.",
+  );
+}
+
 async function main() {
   loadEnvFiles();
   const args = parseArgs(process.argv.slice(2));
   const admin = await adminClient();
   console.log(`\nProject: ${supabaseUrl()}`);
+
+  if (args.preflight) {
+    // One harmless call: proves the URL, the service key and the migrations, before a deploy
+    // changes anything that the database must then be told about.
+    let ready = await admin.rpc("svc_worker_ready");
+    // Right after migrations the Data API may still be loading its picture of the database and
+    // answer "no such function" or "not ready" for a few seconds. Give it half a minute.
+    for (let attempt = 0; attempt < 10 && ready.error && isSchemaLoading(ready); attempt += 1) {
+      await sleep(3000);
+      ready = await admin.rpc("svc_worker_ready");
+    }
+    if (ready.error) fail(describeDbError(ready.error));
+    console.log("The database is reachable with the project's service key.\n");
+    return;
+  }
 
   if (!args.status) {
     const secret = requireEnv(
@@ -132,9 +207,12 @@ async function main() {
     return;
   }
 
+  await checkSchedules(admin, args.status === true);
+  // One dispatch pass, the same one the lr-dispatch schedule runs: it queues work that is due
+  // for campaigns somebody launched and wakes the worker. It never launches anything.
   const tick = await admin.rpc("svc_tick", { p_plan: false });
   if (tick.error) fail(describeDbError(tick.error));
-  console.log("Scheduler tick:", JSON.stringify(tick.data));
+  console.log("Dispatch pass:", JSON.stringify(tick.data));
   await checkWake(admin);
   console.log(
     "Deploying or activating never starts paid work: only launched campaigns produce jobs.\n",
