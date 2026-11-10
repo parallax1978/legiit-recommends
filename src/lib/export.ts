@@ -1,5 +1,6 @@
 import "server-only";
 import { unstable_rethrow } from "next/navigation";
+import { readError } from "@/lib/batch";
 import { getSession, type Session } from "@/lib/session";
 import { createClient, type ServerClient } from "@/lib/supabase/server";
 
@@ -24,6 +25,7 @@ export async function exportContext(): Promise<ExportContext | Response> {
     // Next's own signals (a request-time API used while prerendering) are not failures.
     unstable_rethrow(error);
     // The session could not be read (the database did not answer). That is not "signed out".
+    // getSession has already logged why.
     return unavailableResponse();
   }
   if (!session)
@@ -34,8 +36,12 @@ export async function exportContext(): Promise<ExportContext | Response> {
   return { supabase: await createClient(), session };
 }
 
-/** The data could not be read just now. Distinct from "not found" and from "sign in". */
-export function unavailableResponse(): Response {
+/**
+ * The data could not be read just now. Distinct from "not found" and from "sign in". Pass the
+ * error that caused it, so the server log says why an export answered 503.
+ */
+export function unavailableResponse(cause?: unknown): Response {
+  if (cause) readError("The export", cause);
   return new Response("The export could not be prepared right now. Try again in a moment.", {
     status: 503,
     headers: { "Cache-Control": "no-store", "Retry-After": "10" },
@@ -58,7 +64,7 @@ export async function fetchAll<Row>(
   const rows: Row[] = [];
   for (let from = 0; from < limit; from += PAGE) {
     const { data, error } = await page(from, from + PAGE - 1);
-    if (error) throw new Error("The export could not be read.");
+    if (error) throw readError("The export", error);
     rows.push(...(data ?? []));
     if ((data ?? []).length < PAGE) return { rows, truncated: false };
   }

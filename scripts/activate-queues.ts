@@ -133,13 +133,25 @@ async function checkSchedules(admin: SupabaseClient, waitForPlanner: boolean): P
   if (!waitForPlanner) return;
 
   let planner = plannerState(status);
-  if (planner.state === "never" || planner.state === "stale") {
-    console.log("Waiting for the planner schedule to run (it runs every minute) …");
-    for (let attempt = 0; attempt < 20 && planner.state !== "fresh"; attempt += 1) {
+  if (planner.state !== "fresh") {
+    // What counts is a run that happens now. The last recorded one may be from before this
+    // deployment (it may even be the failure the deployment fixes), so a recorded error is not
+    // the verdict either: wait for the next run and judge that.
+    console.log(
+      planner.state === "failing"
+        ? "The planner's last recorded run failed; waiting for its next run (it runs every minute) …"
+        : "Waiting for the planner schedule to run (it runs every minute) …",
+    );
+    let lastAge = status.planner?.seconds_since_run ?? null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
       await sleep(5000);
       status = await readSchedules(admin);
       planner = plannerState(status);
-      if (planner.state === "failing") break;
+      const age = status.planner?.seconds_since_run ?? null;
+      const ranSince = age !== null && (lastAge === null || age < lastAge);
+      lastAge = age;
+      if (planner.state === "fresh") break;
+      if (planner.state === "failing" && ranSince) break;
     }
   }
   if (planner.state === "fresh") {

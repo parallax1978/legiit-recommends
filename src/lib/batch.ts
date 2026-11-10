@@ -28,7 +28,10 @@ const PARALLEL_CHUNKS = 5;
  */
 export const PAGE_OUT_OF_RANGE = "PGRST103";
 
-/** Upper bound for a paged read, so one request for a screen cannot read without end. */
+/**
+ * Upper bound for a paged read, so one request for a screen cannot read without end. A list
+ * that is longer fails to load (with "read_limit" in the server log) rather than being cut.
+ */
 export const DEFAULT_ROW_LIMIT = 20_000;
 
 interface QueryResult<Row> {
@@ -76,9 +79,11 @@ export async function selectAll<Row>(
   for (let from = 0; from < limit; from += PAGE_SIZE) {
     const batch = await rowsOf(what, page(from, from + PAGE_SIZE - 1));
     rows.push(...batch);
-    if (batch.length < PAGE_SIZE) break;
+    if (batch.length < PAGE_SIZE) return rows;
   }
-  return rows;
+  // The list is longer than this read allows. Returning its first part as if it were all of it
+  // is the silent truncation these helpers exist to prevent.
+  throw readError(what, { code: "read_limit", message: `more than ${limit} rows` });
 }
 
 /**

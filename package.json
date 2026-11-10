@@ -2,7 +2,7 @@
   "name": "legiit-recommends",
   "version": "1.0.0",
   "private": true,
-  "description": "Legiit Recommends \u2014 repeatable OpenAI conversation campaigns with independent fresh-check measurement.",
+  "description": "Legiit Recommends — repeatable OpenAI conversation campaigns with independent fresh-check measurement.",
   "engines": {
     "node": "26.x"
   },
@@ -56,7 +56,7 @@
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@tailwindcss/turbopack": "4.3.5",
-    "@types/node": "22.20.5",
+    "@types/node": "26.6.6",
     "@types/pg": "8.23.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",

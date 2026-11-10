@@ -359,20 +359,42 @@ describe("reading more rows than fit in one request", () => {
 
   it("stops at its row limit and treats a failed page as an error, not as the end", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A list longer than the read allows fails to load. It is never returned cut short.
     let pages = 0;
-    const capped = await selectAll(
+    await expect(
+      selectAll(
+        "Prompts",
+        (from, to) => {
+          pages += 1;
+          return Promise.resolve({
+            data: Array.from({ length: to - from + 1 }, (_, i) => from + i),
+            error: null,
+          });
+        },
+        3000,
+      ),
+    ).rejects.toThrow("Prompts could not be loaded.");
+    expect(pages).toBe(3);
+    expect(logged).toHaveBeenCalledWith(
+      "read_failed",
       "Prompts",
-      (from, to) => {
-        pages += 1;
-        return Promise.resolve({
-          data: Array.from({ length: to - from + 1 }, (_, i) => from + i),
+      "read_limit",
+      "more than 3000 rows",
+    );
+    // Exactly at the limit with a short last page is still a complete list.
+    const exact = await selectAll(
+      "Prompts",
+      (from, to) =>
+        Promise.resolve({
+          data: Array.from(
+            { length: Math.max(0, Math.min(to, 2499) - from + 1) },
+            (_, i) => from + i,
+          ),
           error: null,
-        });
-      },
+        }),
       3000,
     );
-    expect(capped).toHaveLength(3000);
-    expect(pages).toBe(3);
+    expect(exact).toHaveLength(2500);
 
     await expect(
       selectAll("Prompts", (from) =>

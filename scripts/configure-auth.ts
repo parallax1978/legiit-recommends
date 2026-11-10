@@ -1,8 +1,9 @@
 /**
  * Sets the hosted Auth settings this app depends on, and nothing else.
  *
- *   npm run auth:configure               apply
- *   npm run auth:configure -- --check    only report what differs (exit code 2 if anything does)
+ *   npm run auth:configure                       apply
+ *   npm run auth:configure -- --check            only report what differs (exit code 2 if anything does)
+ *   npm run auth:configure -- --data-api-only    only check the Data API's row limit (below)
  *
  * What it sets:
  *   - Site URL = SITE_URL. Invitation and password-reset links are built from it, so it must be
@@ -22,7 +23,8 @@
  *   - The length of the one-time code behind every email link (10 digits).
  *
  * It also checks, without changing it, that the Data API returns at least 1000 rows per request
- * ("Max rows", the default): the web app pages its long lists by that number.
+ * ("Max rows", the default): the web app pages its long lists by that number. The Auth settings
+ * are applied first, so a wrong row limit never keeps sign-ups open; the command then fails.
  *
  * It deliberately does not push supabase/config.toml as a whole: that file carries local
  * development defaults (email throttling, MFA, pooler and storage settings) that would change a
@@ -45,12 +47,29 @@ import {
 } from "./lib/auth-settings";
 import { maxRowsProblem } from "./lib/data-api";
 import { fail, loadEnvFiles, parseArgs, requireEnv } from "./lib/env";
-import { managementClient } from "./lib/management";
+import { managementClient, type ManagementClient } from "./lib/management";
+
+/**
+ * Fails unless the Data API returns at least 1000 rows per request. Only that one field is
+ * read: the same resource also carries secrets, which are neither kept nor printed.
+ */
+async function requireRowLimit(api: ManagementClient): Promise<void> {
+  const dataApi = await api.request<{ max_rows?: unknown }>("GET", "/postgrest");
+  const problem = maxRowsProblem(dataApi?.max_rows);
+  if (problem) fail(problem);
+  console.log(
+    `Data API of project ${api.ref}: Max rows ${String(dataApi.max_rows)}, as required.\n`,
+  );
+}
 
 async function main() {
   loadEnvFiles();
   const args = parseArgs(process.argv.slice(2));
   const checkOnly = args.check === true;
+  if (args["data-api-only"] === true) {
+    await requireRowLimit(managementClient());
+    return;
+  }
   const siteUrl = requireEnv("SITE_URL", "Use the public https URL of the deployed web app.");
 
   const declared = readAuthDeclarations(
@@ -67,15 +86,6 @@ async function main() {
   }
 
   const api = managementClient();
-  // Checked first and never changed. Only this one field is read: the same resource also
-  // carries secrets, which are neither kept nor printed.
-  const dataApi = await api.request<{ max_rows?: unknown }>("GET", "/postgrest");
-  const rowLimitProblem = maxRowsProblem(dataApi?.max_rows);
-  if (rowLimitProblem) fail(rowLimitProblem);
-  console.log(
-    `\nData API of project ${api.ref}: Max rows ${String(dataApi.max_rows)}, as required.`,
-  );
-
   const current = await api.request<AuthConfig>("GET", "/config/auth");
   let desired: AuthConfig;
   try {
@@ -95,6 +105,7 @@ async function main() {
   console.log(`\nAuth settings of project ${api.ref}:`);
   if (names.length === 0) {
     console.log("  Already as required. Nothing to change.\n");
+    await requireRowLimit(api);
     return;
   }
   for (const name of names) {
@@ -107,6 +118,7 @@ async function main() {
   }
   if (checkOnly) {
     console.log(`\n${names.length} setting(s) differ. Run without --check to apply.\n`);
+    await requireRowLimit(api);
     process.exit(2);
   }
 
@@ -117,6 +129,8 @@ async function main() {
     fail(`The project did not accept these settings: ${remaining.join(", ")}.`);
   }
   console.log(`\nApplied ${names.length} setting(s).\n`);
+  // After the Auth settings, so a wrong row limit never leaves sign-ups open.
+  await requireRowLimit(api);
 }
 
 main().catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));

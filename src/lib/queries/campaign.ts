@@ -211,24 +211,29 @@ export function toDraftInput(
 /** The question set a revision uses: the pinned version when frozen, the current one for a draft. */
 export async function loadProbeSetSummary(supabase: ServerClient, revision: Revision) {
   if (!revision.probe_set_id) return null;
-  const { data: set } = await supabase
+  const { data: set, error } = await supabase
     .from("probe_sets")
     .select("name, current_version_id")
     .eq("id", revision.probe_set_id)
     .maybeSingle();
+  if (error) throw readError("The question set", error);
   if (!set) return null;
   const versionId = revision.probe_set_version_id ?? set.current_version_id;
   if (!versionId)
     return { name: set.name, version: null, questions: 0, heldOut: 0, versionId: null };
-  const [{ data: version }, { data: questions }] = await Promise.all([
+  const [versionRead, questions] = await Promise.all([
     supabase.from("probe_set_versions").select("version").eq("id", versionId).maybeSingle(),
-    supabase.from("probe_questions").select("is_held_out").eq("probe_set_version_id", versionId),
+    rowsOf(
+      "The question set",
+      supabase.from("probe_questions").select("is_held_out").eq("probe_set_version_id", versionId),
+    ),
   ]);
+  if (versionRead.error) throw readError("The question set", versionRead.error);
   return {
     name: set.name,
-    version: version?.version ?? null,
-    questions: (questions ?? []).length,
-    heldOut: (questions ?? []).filter((question) => question.is_held_out).length,
+    version: versionRead.data?.version ?? null,
+    questions: questions.length,
+    heldOut: questions.filter((question) => question.is_held_out).length,
     versionId,
   };
 }

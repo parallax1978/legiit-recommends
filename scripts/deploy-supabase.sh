@@ -84,9 +84,13 @@ export SITE_URL="$site"
 
 # Say which commit this is, and refuse backend files nobody committed: otherwise production can
 # end up running migrations or functions that exist only on this machine.
-if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+here="$(pwd -P)"
+top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$top" ] && [ "$(cd "$top" && pwd -P)" = "$here" ]; then
   commit="$(git rev-parse --short HEAD)"
-  uncommitted="$(git status --porcelain -- supabase scripts)"
+  # --untracked-files=all: a new migration that was never added must be seen whatever the
+  # operator's own git settings say about untracked files.
+  uncommitted="$(git status --porcelain --untracked-files=all -- supabase scripts)"
   if [ -n "$uncommitted" ]; then
     if [ "${ALLOW_UNCOMMITTED:-0}" != "1" ]; then
       echo "These backend files differ from commit $commit:" >&2
@@ -99,6 +103,17 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   else
     echo "==> Deploying the backend from commit $commit"
   fi
+elif [ -e .git ] || [ -n "$top" ]; then
+  # There is a repository here, or around this directory, but git cannot say what this
+  # directory holds (git is missing, the checkout belongs to another user, or this is a copy
+  # inside another repository). Not checking would be the same as claiming it is clean.
+  if [ "${ALLOW_UNCOMMITTED:-0}" != "1" ]; then
+    echo "git cannot tell which commit the backend files in $here correspond to." >&2
+    echo "Run this from the repository's own checkout with a working git, or set" >&2
+    echo "ALLOW_UNCOMMITTED=1 to deploy the files as they are." >&2
+    exit 1
+  fi
+  echo "==> Deploying the backend files in this directory, not checked against a commit (ALLOW_UNCOMMITTED=1)"
 else
   echo "==> Not a git checkout: deploying the backend files in this directory"
 fi
@@ -119,6 +134,8 @@ if [ "${SKIP_AUTH_CONFIG:-0}" != "1" ]; then
   tsx scripts/configure-auth.ts
 else
   echo "==> 1/5 Skipping Auth settings (SKIP_AUTH_CONFIG=1). Set them by hand: see README, 'Auth settings'."
+  # The Data API's row limit is checked all the same: the web app depends on it.
+  tsx scripts/configure-auth.ts --data-api-only
 fi
 
 echo "==> 2/5 Applying database migrations to $ref"

@@ -95,6 +95,16 @@ test("the conversations list filters by classification in the database", async (
     expect(Number(matching[0]!.n)).toBe(ids.length);
   }
 
+  // A page number past the end (an old link, a filtered list that has shrunk) goes back to the
+  // first page of the same filters instead of failing or claiming that nothing matches.
+  const some = expected[0]!.inclusion;
+  await page.goto(`/conversations?inclusion=${some}&page=99`);
+  await expect(page).toHaveURL(new RegExp(`/conversations\\?inclusion=${some}$`));
+  await expect(page.locator("table tbody tr").first()).toBeVisible();
+  await page.goto("/fresh-checks?page=99");
+  await expect(page).toHaveURL(/\/fresh-checks\?campaign=[0-9a-f-]{36}$/);
+  await expect(page.getByText("could not be loaded")).toHaveCount(0);
+
   // A classification no response has: an empty list, not an error.
   const used = new Set(expected.map((row) => row.inclusion));
   const unused = ["ambiguous", "mentioned_only", "not_mentioned", "included"].find(

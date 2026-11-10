@@ -1,4 +1,4 @@
-import { rowsOf } from "@/lib/batch";
+import { readError, rowsOf } from "@/lib/batch";
 import {
   EXPORT_ROW_LIMIT,
   csvResponse,
@@ -33,7 +33,7 @@ export async function GET(
     .eq("id", id)
     .maybeSingle();
   // A read that failed is not "no such campaign".
-  if (error) return unavailableResponse();
+  if (error) return unavailableResponse(error);
   // Not found and not permitted look the same: an id alone reveals nothing.
   if (
     !campaign ||
@@ -86,32 +86,43 @@ async function revisionNumbers(
 }
 
 async function conversationsCsv(ctx: ExportContext, campaign: Campaign): Promise<CsvTable> {
-  const [{ rows: runs, truncated: runsCut }, { rows: turns, truncated: turnsCut }, revisions] =
-    await Promise.all([
-      fetchAll((from, to) =>
-        ctx.supabase
-          .from("runs")
-          .select("*")
-          .eq("campaign_id", campaign.id)
-          .order("created_at")
-          .order("id")
-          .range(from, to),
-      ),
-      fetchAll(
-        (from, to) =>
-          ctx.supabase
+  const TURN_COLUMNS =
+    "run_id, step_index, status, inclusion, mentioned, rank, list_position, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, cost_usd, returned_model";
+  const allTurns = () => ctx.supabase.from("run_turns").select(TURN_COLUMNS);
+  const [{ rows: runs, truncated }, revisions] = await Promise.all([
+    fetchAll((from, to) =>
+      ctx.supabase
+        .from("runs")
+        .select("*")
+        .eq("campaign_id", campaign.id)
+        .order("created_at")
+        .order("id")
+        .range(from, to),
+    ),
+    revisionNumbers(ctx, campaign.id),
+  ]);
+  // The turns of the listed conversations (see transcriptsJson for why they are bounded by the
+  // last listed conversation when the list was cut). A conversation has at most 12 turns.
+  const lastCreatedAt = truncated ? runs.at(-1)?.created_at : undefined;
+  const { rows: turns, truncated: turnsCut } = await fetchAll(
+    (from, to) => {
+      const query = lastCreatedAt
+        ? (ctx.supabase
             .from("run_turns")
-            .select(
-              "run_id, step_index, status, inclusion, mentioned, rank, list_position, input_tokens, cached_input_tokens, output_tokens, reasoning_tokens, cost_usd, returned_model",
-            )
-            .eq("campaign_id", campaign.id)
-            .order("run_id")
-            .order("step_index")
-            .range(from, to),
-        EXPORT_ROW_LIMIT * 4,
-      ),
-      revisionNumbers(ctx, campaign.id),
-    ]);
+            .select(`${TURN_COLUMNS}, runs!inner(created_at)`)
+            .lte("runs.created_at", lastCreatedAt) as unknown as ReturnType<typeof allTurns>)
+        : allTurns();
+      return query
+        .eq("campaign_id", campaign.id)
+        .order("run_id")
+        .order("step_index")
+        .range(from, to);
+    },
+    EXPORT_ROW_LIMIT * 12 + 1000,
+  );
+  // Without all of its turns a conversation's first, final, token and cost columns would be
+  // blank or too low, and nothing in the file would show it.
+  if (turnsCut) throw readError("The export", { code: "read_limit", message: "turns" });
   const byRun = new Map<string, typeof turns>();
   for (const turn of turns) byRun.set(turn.run_id, [...(byRun.get(turn.run_id) ?? []), turn]);
 
@@ -196,8 +207,7 @@ async function conversationsCsv(ctx: ExportContext, campaign: Campaign): Promise
       { header: "restart_of_conversation_id", value: (row) => row.run.restart_of_run_id },
     ],
   );
-  // Without all of its turns a conversation's first and final columns would be blank.
-  return { csv, truncated: runsCut || turnsCut };
+  return { csv, truncated };
 }
 
 async function freshChecksCsv(ctx: ExportContext, campaign: Campaign): Promise<CsvTable> {
@@ -426,7 +436,7 @@ async function configJson(ctx: ExportContext, campaign: Campaign) {
         .select("name, current_version_id")
         .eq("id", revision.probe_set_id)
         .maybeSingle();
-      if (error) throw new Error("The export could not be loaded.");
+      if (error) throw readError("The export", error);
       questionSet = set ? { name: set.name } : null;
       const versionId = revision.probe_set_version_id ?? set?.current_version_id;
       if (versionId) {

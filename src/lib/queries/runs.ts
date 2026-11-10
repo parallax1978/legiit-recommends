@@ -41,7 +41,7 @@ export async function listRuns(
   filters: RunListFilters,
   page: number,
   pageSize = RUN_PAGE_SIZE,
-): Promise<{ rows: RunListRow[]; total: number }> {
+): Promise<{ rows: RunListRow[]; total: number; pastEnd: boolean }> {
   const COLUMNS =
     "id, campaign_id, kind, ordinal, status, model, steps_total, steps_completed, scheduled_for, started_at, completed_at, error_class, target_in_first_response, restart_of_run_id, content_purged_at, created_at, campaigns(name)";
   const plain = supabase.from("runs").select(COLUMNS, { count: "exact" });
@@ -75,9 +75,10 @@ export async function listRuns(
     query = query.eq("kind", filters.kind);
 
   const { data: runs, count, error } = await query;
-  // A page number past the end (a filtered list that has shrunk, an old link): an empty page,
-  // which the screen shows as "nothing matches", not a failure.
-  if (error && error.code === PAGE_OUT_OF_RANGE) return { rows: [], total: 0 };
+  // A page number past the end (a filtered list that has shrunk, an old link) is not a failure.
+  // The caller sends the person back to the first page; saying "nothing matches" would be
+  // untrue when earlier pages have rows.
+  if (error && error.code === PAGE_OUT_OF_RANGE) return { rows: [], total: 0, pastEnd: true };
   if (error) throw readError("Conversations", error);
   // One page of conversations: at most `pageSize` ids, so this list is always short.
   const runIds = (runs ?? []).map((run) => run.id);
@@ -131,5 +132,5 @@ export async function listRuns(
       contentPurged: Boolean(run.content_purged_at),
     };
   });
-  return { rows, total: count ?? rows.length };
+  return { rows, total: count ?? rows.length, pastEnd: false };
 }

@@ -1,11 +1,13 @@
 import { MessagesSquare } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { RunsTable } from "@/components/runs-table";
 import { Button } from "@/components/ui/button";
 import { EmptyState, PageHeader } from "@/components/ui/card";
 import { Select } from "@/components/ui/form";
-import { Pagination, Screen } from "@/components/ui/misc";
+import { Pagination, Screen, buildHref } from "@/components/ui/misc";
+import { readError, rowsOf } from "@/lib/batch";
 import { first, pageNumber, uuidParam, type SearchParams } from "@/lib/params";
 import { RUN_PAGE_SIZE, listRuns } from "@/lib/queries/runs";
 import { requireSession } from "@/lib/session";
@@ -50,13 +52,16 @@ async function Conversations({ searchParams }: { searchParams: Promise<SearchPar
     : "";
   const page = pageNumber(params.page);
 
-  const [{ data: campaigns }, { rows, total }, anyRun] = await Promise.all([
-    supabase
-      .from("campaigns")
-      .select("id, name")
-      .eq("workspace_id", session.workspace.id)
-      .neq("status", "draft")
-      .order("created_at", { ascending: false }),
+  const [campaigns, { rows, total, pastEnd }, anyRun] = await Promise.all([
+    rowsOf(
+      "Campaigns",
+      supabase
+        .from("campaigns")
+        .select("id, name")
+        .eq("workspace_id", session.workspace.id)
+        .neq("status", "draft")
+        .order("created_at", { ascending: false }),
+    ),
     listRuns(
       supabase,
       { workspaceId: session.workspace.id, campaignId, status, kind, inclusion },
@@ -67,6 +72,10 @@ async function Conversations({ searchParams }: { searchParams: Promise<SearchPar
       .select("id", { count: "exact", head: true })
       .eq("workspace_id", session.workspace.id),
   ]);
+  // A page number past the end: back to the first page of the same filters.
+  if (pastEnd && page > 1)
+    redirect(buildHref("/conversations", { campaign: campaignId, status, kind, inclusion }));
+  if (anyRun.error) throw readError("Conversations", anyRun.error);
   const filtered = Boolean(campaignId || status || kind || inclusion);
 
   return (
@@ -95,7 +104,7 @@ async function Conversations({ searchParams }: { searchParams: Promise<SearchPar
               </label>
               <Select id="f-campaign" name="campaign" defaultValue={campaignId ?? ""}>
                 <option value="">All campaigns</option>
-                {(campaigns ?? []).map((campaign) => (
+                {campaigns.map((campaign) => (
                   <option key={campaign.id} value={campaign.id}>
                     {campaign.name}
                   </option>

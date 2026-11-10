@@ -15,7 +15,7 @@ export async function GET(_request: Request, context: RouteContext<"/exports/con
     .eq("id", id)
     .maybeSingle();
   // A read that failed is not "no such conversation".
-  if (error) return unavailableResponse();
+  if (error) return unavailableResponse(error);
   if (!run || !ctx.session.workspaces.some((workspace) => workspace.id === run.workspace_id))
     return notFoundResponse();
 
@@ -42,7 +42,8 @@ export async function GET(_request: Request, context: RouteContext<"/exports/con
         .order("id"),
     ),
   ]);
-  if (campaignRead.error || revisionRead.error) return unavailableResponse();
+  if (campaignRead.error || revisionRead.error)
+    return unavailableResponse(campaignRead.error ?? revisionRead.error);
   const campaign = campaignRead.data;
   const revision = revisionRead.data;
   const turnIds = new Set(turns.map((turn) => turn.id));

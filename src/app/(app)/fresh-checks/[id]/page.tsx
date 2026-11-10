@@ -12,8 +12,10 @@ import { Badge, Callout, Card, CardBody, CardHeader, PageHeader } from "@/compon
 import { LocalTime } from "@/components/ui/local-time";
 import { DefinitionList, Screen } from "@/components/ui/misc";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/table";
+import { readError } from "@/lib/batch";
 import { formatDate, formatDuration, formatNumber, formatUsd } from "@/lib/format";
 import { errorClass, humanize, phaseLabel } from "@/lib/labels";
+import { uuidParam } from "@/lib/params";
 import type { MatchSpan } from "@/lib/queries/types";
 import { hasRole, requireSession } from "@/lib/session";
 import { createClient } from "@/lib/supabase/server";
@@ -30,26 +32,21 @@ export default function FreshCheckPage(props: PageProps<"/fresh-checks/[id]">) {
 
 async function FreshCheck({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
+  if (!uuidParam(id)) notFound();
   const session = await requireSession();
   const supabase = await createClient();
-  const { data: check } = await supabase
+  const { data: check, error: checkError } = await supabase
     .from("fresh_checks")
     .select("*")
     .eq("id", id)
     .eq("workspace_id", session.workspace.id)
     .maybeSingle();
+  // "Could not be read" is not "does not exist": only the second is a 404.
+  if (checkError) throw readError("The fresh check", checkError);
   if (!check) notFound();
   const isAdmin = hasRole(session.role, "admin");
 
-  const [
-    { data: campaign },
-    { data: revision },
-    { data: group },
-    { data: attempts },
-    { data: classifications },
-    { data: job },
-  ] = await Promise.all([
+  const reads = await Promise.all([
     supabase.from("campaigns").select("id, name").eq("id", check.campaign_id).maybeSingle(),
     supabase
       .from("campaign_revisions")
@@ -74,6 +71,16 @@ async function FreshCheck({ params }: { params: Promise<{ id: string }> }) {
       .order("created_at"),
     supabase.from("jobs").select("id, status").eq("id", check.job_id).maybeSingle(),
   ]);
+  const failedRead = reads.find((read) => read.error)?.error;
+  if (failedRead) throw readError("The fresh check", failedRead);
+  const [
+    { data: campaign },
+    { data: revision },
+    { data: group },
+    { data: attempts },
+    { data: classifications },
+    { data: job },
+  ] = reads;
   const zone = revision?.timezone ?? null;
   const current = (classifications ?? []).find((item) => item.is_current);
   const sent = (attempts ?? []).at(-1)?.request_params as Record<string, unknown> | undefined;

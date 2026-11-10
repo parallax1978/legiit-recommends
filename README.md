@@ -409,17 +409,17 @@ budget exhaustion. To rotate the worker secret, run `npm run deploy:supabase` ag
   it was at that moment, so launched campaigns carry on from the restored state: pause them or
   use the emergency stop right after a restore if that is not what you want, and check each
   OpenAI connection with **Test connection**.
-- A logical dump is a readable copy of your data, not a recovery path. It needs the database
-  password and a direct connection to the database, which the token-only setup above does not
-  use (reset the password under **Database → Settings** if the project was created by an
-  integration and you never saw it; nothing in this app uses it):
+- A logical dump is a readable copy of your data, not a recovery path. It needs a direct
+  connection to the database from the machine you run it on (the deploy itself only needs
+  HTTPS). With `SUPABASE_ACCESS_TOKEN` set, the Supabase CLI connects through a temporary
+  login role, so the database password is not needed; `--password` is the alternative.
 
 ```bash
-npx supabase db dump --remote=<project-ref> --password "$SUPABASE_DB_PASSWORD" -f backup-schema.sql
+npx supabase db dump --remote=<project-ref> -f backup-schema.sql
 ```
 
 ```bash
-npx supabase db dump --remote=<project-ref> --password "$SUPABASE_DB_PASSWORD" --data-only --use-copy -f backup-data.sql
+npx supabase db dump --remote=<project-ref> --data-only --use-copy -f backup-data.sql
 ```
 
 The two files are not a complete copy. Supabase's own parts are left out or only partly

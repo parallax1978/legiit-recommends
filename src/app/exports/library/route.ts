@@ -1,5 +1,11 @@
 import { inChunks, rowsOf } from "@/lib/batch";
-import { csvResponse, exportContext, fetchAll, notFoundResponse } from "@/lib/export";
+import {
+  EXPORT_ROW_LIMIT,
+  csvResponse,
+  exportContext,
+  fetchAll,
+  notFoundResponse,
+} from "@/lib/export";
 import { toCsv } from "@shared/core/csv.ts";
 import { TEMPLATE_KINDS } from "@shared/core/templates.ts";
 
@@ -11,7 +17,7 @@ export async function GET(request: Request) {
   if (!(TEMPLATE_KINDS as readonly string[]).includes(kind) || kind === "fresh_check")
     return notFoundResponse();
 
-  const { rows: templates } = await fetchAll((from, to) =>
+  const { rows: templates, truncated } = await fetchAll((from, to) =>
     ctx.supabase
       .from("templates")
       .select("id, label, collection, source, archived_at, current_version_id")
@@ -37,7 +43,8 @@ export async function GET(request: Request) {
   );
 
   return csvResponse(
-    `prompts-${kind.replace(/_/g, "-")}.csv`,
+    // A file that stops at the row limit says so in its name.
+    `prompts-${kind.replace(/_/g, "-")}${truncated ? `-first-${EXPORT_ROW_LIMIT}-rows` : ""}.csv`,
     toCsv(templates, [
       { header: "body", value: (row) => bodies.get(row.current_version_id ?? "")?.body ?? "" },
       { header: "label", value: (row) => row.label },

@@ -19,8 +19,10 @@ import { Badge, Callout, Card, CardBody, CardHeader, PageHeader } from "@/compon
 import { LocalTime } from "@/components/ui/local-time";
 import { DefinitionList, Screen } from "@/components/ui/misc";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/table";
+import { readError, rowsOf } from "@/lib/batch";
 import { formatDuration, formatNumber, formatUsd } from "@/lib/format";
 import { errorClass, humanize, reasonText, templateKind } from "@/lib/labels";
+import { uuidParam } from "@/lib/params";
 import type { MatchSpan } from "@/lib/queries/types";
 import { hasRole, requireSession } from "@/lib/session";
 import { createClient } from "@/lib/supabase/server";
@@ -46,26 +48,21 @@ function paramsText(params: unknown): string {
 
 async function Conversation({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
+  if (!uuidParam(id)) notFound();
   const session = await requireSession();
   const supabase = await createClient();
-  const { data: run } = await supabase
+  const { data: run, error: runError } = await supabase
     .from("runs")
     .select("*")
     .eq("id", id)
     .eq("workspace_id", session.workspace.id)
     .maybeSingle();
+  // "Could not be read" is not "does not exist": only the second is a 404.
+  if (runError) throw readError("The conversation", runError);
   if (!run) notFound();
   const isAdmin = hasRole(session.role, "admin");
 
-  const [
-    { data: campaign },
-    { data: revision },
-    { data: job },
-    { data: turns },
-    { data: attempts },
-    { data: restarts },
-  ] = await Promise.all([
+  const reads = await Promise.all([
     supabase.from("campaigns").select("id, name, status").eq("id", run.campaign_id).maybeSingle(),
     supabase
       .from("campaign_revisions")
@@ -83,17 +80,34 @@ async function Conversation({ params }: { params: Promise<{ id: string }> }) {
     supabase.from("provider_attempts").select("*").eq("run_id", run.id).order("started_at"),
     supabase.from("runs").select("id, status").eq("restart_of_run_id", run.id),
   ]);
+  // A conversation shown without its turns or requests because a read failed would look like
+  // one that never ran.
+  const failedRead = reads.find((read) => read.error)?.error;
+  if (failedRead) throw readError("The conversation", failedRead);
+  const [
+    { data: campaign },
+    { data: revision },
+    { data: job },
+    { data: turns },
+    { data: attempts },
+    { data: restarts },
+  ] = reads;
   const turnIds = (turns ?? []).map((turn) => turn.id);
-  const { data: classifications } = turnIds.length
-    ? await supabase
-        .from("classifications")
-        .select(
-          "id, subject_id, method, inclusion, rank, list_position, list_kind, matched_spans, reason, note, is_current, created_at",
-        )
-        .eq("subject_type", "run_turn")
-        .in("subject_id", turnIds)
-        .order("created_at")
-    : { data: [] };
+  // One conversation's turns: at most 12 ids, so this list is always short.
+  const classifications = turnIds.length
+    ? await rowsOf(
+        "The conversation",
+        supabase
+          .from("classifications")
+          .select(
+            "id, subject_id, method, inclusion, rank, list_position, list_kind, matched_spans, reason, note, is_current, created_at",
+          )
+          .eq("subject_type", "run_turn")
+          .in("subject_id", turnIds)
+          .order("created_at")
+          .order("id"),
+      )
+    : [];
 
   const totals = (turns ?? []).reduce(
     (sum, turn) => ({
@@ -222,7 +236,7 @@ async function Conversation({ params }: { params: Promise<{ id: string }> }) {
             </Card>
           ) : null}
           {(turns ?? []).map((turn) => {
-            const history = (classifications ?? []).filter((item) => item.subject_id === turn.id);
+            const history = classifications.filter((item) => item.subject_id === turn.id);
             const current = history.find((item) => item.is_current);
             const own = (attempts ?? []).filter((attempt) => attempt.run_turn_id === turn.id);
             return (

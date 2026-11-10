@@ -1,6 +1,7 @@
 import { ScanSearch } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { CorrectClassificationButton } from "@/components/classification-controls";
 import { DeleteManualCheckButton, ManualCheckButton } from "@/components/manual-check-form";
 import { ApiResultsNote, FreshCheckComparisons } from "@/components/results/campaign-results";
@@ -9,9 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Badge, Card, CardBody, CardHeader, EmptyState, PageHeader } from "@/components/ui/card";
 import { Select } from "@/components/ui/form";
 import { LocalTime } from "@/components/ui/local-time";
-import { Pagination, Screen } from "@/components/ui/misc";
+import { Pagination, Screen, buildHref } from "@/components/ui/misc";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/table";
-import { PAGE_OUT_OF_RANGE, readError } from "@/lib/batch";
+import { PAGE_OUT_OF_RANGE, readError, rowsOf } from "@/lib/batch";
 import { formatDate, formatUsd } from "@/lib/format";
 import { humanize, phaseLabel } from "@/lib/labels";
 import { first, pageNumber, uuidParam, type SearchParams } from "@/lib/params";
@@ -37,15 +38,18 @@ async function FreshChecks({ searchParams }: { searchParams: Promise<SearchParam
   const isAdmin = hasRole(session.role, "admin");
   const workspaceId = session.workspace.id;
 
-  const { data: campaigns } = await supabase
-    .from("campaigns")
-    .select("id, name, status, launched_at")
-    .eq("workspace_id", workspaceId)
-    .neq("status", "draft")
-    .order("launched_at", { ascending: false });
+  // A list that could not be read is not "no fresh checks yet".
+  const campaigns = await rowsOf(
+    "Campaigns",
+    supabase
+      .from("campaigns")
+      .select("id, name, status, launched_at")
+      .eq("workspace_id", workspaceId)
+      .neq("status", "draft")
+      .order("launched_at", { ascending: false }),
+  );
   const requested = uuidParam(params.campaign);
-  const campaign =
-    (campaigns ?? []).find((item) => item.id === requested) ?? (campaigns ?? [])[0] ?? null;
+  const campaign = campaigns.find((item) => item.id === requested) ?? campaigns[0] ?? null;
 
   const header = (
     <PageHeader
@@ -113,18 +117,22 @@ async function FreshChecks({ searchParams }: { searchParams: Promise<SearchParam
       .order("observed_on", { ascending: false }),
     supabase.from("campaigns").select("active_revision_id").eq("id", campaign.id).maybeSingle(),
   ]);
-  // A page number past the end of the list is an empty page, not a failure.
-  const pastEnd = checks.error?.code === PAGE_OUT_OF_RANGE;
-  if (metrics.error) throw readError("Fresh checks", metrics.error);
-  if (checks.error && !pastEnd) throw readError("Fresh checks", checks.error);
-  const { data: zoneRow } = revision.data?.active_revision_id
+  // A page number past the end of the list is not a failure: back to the first page of the
+  // same filters. Saying "no fresh checks" under the campaign's own totals would be untrue.
+  if (checks.error?.code === PAGE_OUT_OF_RANGE && page > 1)
+    redirect(buildHref("/fresh-checks", { campaign: campaign.id, phase, questions, outcome }));
+  const failed =
+    metrics.error ?? checks.error ?? groups.error ?? manual.error ?? revision.error ?? null;
+  if (failed) throw readError("Fresh checks", failed);
+  const zoneRead = revision.data?.active_revision_id
     ? await supabase
         .from("campaign_revisions")
         .select("timezone")
         .eq("id", revision.data.active_revision_id)
         .maybeSingle()
-    : { data: null };
-  const zone = zoneRow?.timezone ?? null;
+    : null;
+  if (zoneRead?.error) throw readError("Fresh checks", zoneRead.error);
+  const zone = zoneRead?.data?.timezone ?? null;
   const groupSequence = new Map((groups.data ?? []).map((group) => [group.id, group.sequence]));
   const multipleGroups = (groups.data ?? []).length > 1;
   const filtered = Boolean(phase || questions || outcome);
@@ -138,7 +146,7 @@ async function FreshChecks({ searchParams }: { searchParams: Promise<SearchParam
             Campaign
           </label>
           <Select id="fc-campaign" name="campaign" defaultValue={campaign.id}>
-            {(campaigns ?? []).map((item) => (
+            {campaigns.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
               </option>

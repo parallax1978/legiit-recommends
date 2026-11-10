@@ -38,7 +38,7 @@ import {
 import { LocalTime } from "@/components/ui/local-time";
 import { DefinitionList, PermissionNote, Screen, Tabs } from "@/components/ui/misc";
 import { Table, TableWrap, Td, Th, Tr } from "@/components/ui/table";
-import { inChunks, rowsOf } from "@/lib/batch";
+import { inChunks, readError, rowsOf } from "@/lib/batch";
 import { formatDate, formatNumber, formatUsd } from "@/lib/format";
 import { dataSharing, errorClass, humanize, jobKind, pauseReason, reasonText } from "@/lib/labels";
 import { first, type SearchParams } from "@/lib/params";
@@ -431,28 +431,36 @@ function capabilityRows(profile: CapabilityProfile) {
 async function ConnectionsTab({ session, supabase }: { session: Session; supabase: ServerClient }) {
   const owner = hasRole(session.role, "owner");
   const workspaceId = session.workspace.id;
-  const { data: connections } = await supabase
-    .from("provider_connections")
-    .select("*")
-    .eq("workspace_id", workspaceId)
-    .is("archived_at", null)
-    .order("created_at");
-  const ids = (connections ?? []).map((connection) => connection.id);
-  const [{ data: models }, { data: prices }] = await Promise.all([
-    ids.length
-      ? supabase
+  // Read failures are errors, not empty lists: "No OpenAI connection yet" must only be shown
+  // when that is what the database said.
+  const connections = await rowsOf(
+    "Connections",
+    supabase
+      .from("provider_connections")
+      .select("*")
+      .eq("workspace_id", workspaceId)
+      .is("archived_at", null)
+      .order("created_at"),
+  );
+  const ids = connections.map((connection) => connection.id);
+  const [models, prices] = await Promise.all([
+    inChunks(ids, (chunk) =>
+      rowsOf(
+        "Models",
+        supabase
           .from("provider_models")
           .select(
             "connection_id, model_id, is_listed, shutdown_date, verification_status, verified_at, capabilities, verification_error",
           )
-          .in("connection_id", ids)
-          .order("model_id")
-      : Promise.resolve({ data: [] as never[] }),
-    supabase.rpc("effective_prices", { p_workspace_id: workspaceId }),
+          .in("connection_id", chunk)
+          .order("model_id"),
+      ),
+    ),
+    rowsOf("Prices", supabase.rpc("effective_prices", { p_workspace_id: workspaceId })),
   ]);
-  const priced = new Set((prices ?? []).map((price) => price.model_id));
+  const priced = new Set(prices.map((price) => price.model_id));
 
-  if ((connections ?? []).length === 0) {
+  if (connections.length === 0) {
     return (
       <EmptyState
         title="No OpenAI connection yet"
@@ -479,8 +487,8 @@ async function ConnectionsTab({ session, supabase }: { session: Session; supabas
         </PermissionNote>
       )}
 
-      {(connections ?? []).map((connection) => {
-        const own = (models ?? []).filter((model) => model.connection_id === connection.id);
+      {connections.map((connection) => {
+        const own = models.filter((model) => model.connection_id === connection.id);
         const verified = own.filter((model) => model.verification_status === "verified");
         const failed = own.filter((model) => model.verification_status === "failed");
         const listed = own.filter((model) => model.is_listed);
@@ -737,16 +745,19 @@ async function ConnectionsTab({ session, supabase }: { session: Session; supabas
 async function PricingTab({ session, supabase }: { session: Session; supabase: ServerClient }) {
   const owner = hasRole(session.role, "owner");
   const workspaceId = session.workspace.id;
-  const [{ data: prices }, { data: models }] = await Promise.all([
-    supabase.rpc("effective_prices", { p_workspace_id: workspaceId }),
-    supabase
-      .from("provider_models")
-      .select("model_id")
-      .eq("workspace_id", workspaceId)
-      .eq("verification_status", "verified"),
+  const [prices, models] = await Promise.all([
+    rowsOf("Prices", supabase.rpc("effective_prices", { p_workspace_id: workspaceId })),
+    rowsOf(
+      "Models",
+      supabase
+        .from("provider_models")
+        .select("model_id")
+        .eq("workspace_id", workspaceId)
+        .eq("verification_status", "verified"),
+    ),
   ]);
-  const verified = [...new Set((models ?? []).map((model) => model.model_id))];
-  const priced = new Set((prices ?? []).map((price) => price.model_id));
+  const verified = [...new Set(models.map((model) => model.model_id))];
+  const priced = new Set(prices.map((price) => price.model_id));
   const missing = verified.filter((id) => !priced.has(id));
   const perM = (value: number | null) =>
     value === null ? "—" : formatUsd(value, { precise: true });
@@ -784,7 +795,7 @@ async function PricingTab({ session, supabase }: { session: Session; supabase: S
             </tr>
           </thead>
           <tbody>
-            {(prices ?? []).map((price) => (
+            {prices.map((price) => (
               <Tr key={price.id}>
                 <Td>
                   <span className="font-mono text-xs font-semibold">{price.model_id}</span>
@@ -852,7 +863,7 @@ function HealthRow({
 async function StatusTab({ session, supabase }: { session: Session; supabase: ServerClient }) {
   const admin = hasRole(session.role, "admin");
   const workspaceId = session.workspace.id;
-  const [statusResult, { data: jobs }, audit] = await Promise.all([
+  const [statusResult, jobsRead, audit] = await Promise.all([
     supabase.rpc("operational_status", { p_workspace_id: workspaceId }),
     supabase
       .from("jobs")
@@ -872,7 +883,10 @@ async function StatusTab({ session, supabase }: { session: Session; supabase: Se
           .limit(40)
       : Promise.resolve({ data: null }),
   ]);
-  if (statusResult.error) throw new Error("Operational status could not be loaded.");
+  if (statusResult.error) throw readError("Operational status", statusResult.error);
+  // "Nothing needs review" must only be shown when that is what the database said.
+  if (jobsRead.error) throw readError("The review queue", jobsRead.error);
+  const jobs = jobsRead.data;
   const status = statusResult.data as unknown as OperationalStatus;
   const ws = status.workspace;
   const beat = (name: string, maxAgeSeconds: number) => {
