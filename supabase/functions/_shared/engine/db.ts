@@ -187,6 +187,9 @@ export class DatabaseError extends Error {
   }
 }
 
+/** How many times a call aborted by a deadlock or serialization failure is made in total. */
+const TRANSIENT_RETRIES = 4;
+
 function refArgs(ref: LeaseRef) {
   return {
     p_job_id: ref.job_id,
@@ -199,10 +202,22 @@ function refArgs(ref: LeaseRef) {
 // deno-lint-ignore no-explicit-any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped service-role client
 export function createSupabaseEngineDb(client: SupabaseClient<any, any, any>): EngineDb {
+  /**
+   * Every call is one database transaction. When Postgres aborts it as a deadlock victim or for
+   * a serialization failure, nothing was written, so the same call is simply made again. This
+   * matters most for commits: the provider request has already been paid for and its result
+   * must not be dropped because of a transient lock conflict.
+   */
   async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
-    const { data, error } = await client.rpc(fn, args);
-    if (error) throw new DatabaseError(fn, error.message, error.code);
-    return data as T;
+    for (let attempt = 1; ; attempt += 1) {
+      const { data, error } = await client.rpc(fn, args);
+      if (!error) return data as T;
+      const transient = error.code === "40P01" || error.code === "40001";
+      if (!transient || attempt >= TRANSIENT_RETRIES) {
+        throw new DatabaseError(fn, error.message, error.code);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 40 * attempt + Math.random() * 80));
+    }
   }
 
   return {

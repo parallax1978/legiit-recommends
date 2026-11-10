@@ -10,11 +10,13 @@ import {
   drain,
   expectDbError,
   launch,
+  makeQueueVisible,
   resetDatabase,
   rpc,
   sql,
   startFake,
   tick,
+  work,
 } from "./harness.ts";
 
 let fake: FakeOpenAI;
@@ -86,6 +88,41 @@ describe("fresh checks", () => {
       [campaign.id],
     );
     expect(timing!.ok).toBe(true);
+  });
+
+  it("commits many results at the same moment without deadlocking or losing a paid response", async () => {
+    const workspace = await createWorkspace();
+    const connection = await createConnection(workspace, fake, { maxConcurrent: 8 });
+    const campaign = await createCampaign(workspace, connection, {
+      config: { baseline_samples: 24 },
+    });
+    fake.reset();
+    await launch(workspace, campaign);
+
+    // Eight consumers at a time, the way several workers are woken together. Every one of them
+    // reserves budget and commits a result for the same campaign and connection.
+    for (let round = 0; round < 20; round += 1) {
+      await tick(undefined, false);
+      await makeQueueVisible();
+      const outcomes = await Promise.all(Array.from({ length: 8 }, () => work(fake)));
+      if (outcomes.every((outcome) => outcome.status === "idle")) break;
+    }
+
+    const baseline = await checks(campaign.id);
+    expect(baseline).toHaveLength(24);
+    expect(baseline.every((check) => check.status === "completed")).toBe(true);
+    // One provider request and one settled attempt per check: nothing was dropped and re-sent.
+    expect(fake.responseRequests()).toHaveLength(24);
+    const attempts = await sql<{ status: string; n: string }>(
+      "select status::text, count(*)::text as n from public.provider_attempts where campaign_id = $1 group by status",
+      [campaign.id],
+    );
+    expect(attempts).toEqual([{ status: "succeeded", n: "24" }]);
+    const reservations = await sql<{ status: string; n: string }>(
+      "select status::text, count(*)::text as n from public.budget_reservations where campaign_id = $1 group by status",
+      [campaign.id],
+    );
+    expect(reservations).toEqual([{ status: "settled", n: "24" }]);
   });
 
   it("never sends target, campaign or conversation context with a fresh check", async () => {

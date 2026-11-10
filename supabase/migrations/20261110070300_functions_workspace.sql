@@ -130,7 +130,7 @@ begin
   perform 1
   from app_private.owner_bootstrap_grants g
   where g.email = v_email and g.consumed_at is null
-  for update;
+  for no key update;
   if not found then
     perform app_private.forbid('This account is not authorized to create a workspace.');
   end if;
@@ -176,7 +176,7 @@ begin
   for v_inv in
     select i.* from public.workspace_invitations i
     where i.email = v_email and i.status = 'pending'
-    for update
+    for no key update
   loop
     insert into public.workspace_members (workspace_id, user_id, role, invited_by)
     values (v_inv.workspace_id, v_uid, v_inv.role, v_inv.invited_by)
@@ -283,7 +283,7 @@ declare
 begin
   perform app_private.require_role(p_workspace_id, 'owner');
   -- Serialize owner-count changes per workspace.
-  perform 1 from public.workspaces w where w.id = p_workspace_id for update;
+  perform 1 from public.workspaces w where w.id = p_workspace_id for no key update;
 
   select m.role into v_current
   from public.workspace_members m
@@ -322,7 +322,7 @@ begin
   else
     perform app_private.require_role(p_workspace_id, 'owner');
   end if;
-  perform 1 from public.workspaces w where w.id = p_workspace_id for update;
+  perform 1 from public.workspaces w where w.id = p_workspace_id for no key update;
 
   select m.role into v_current
   from public.workspace_members m
@@ -376,7 +376,7 @@ declare
   v_name text;
 begin
   perform app_private.require_role(p_workspace_id, 'owner');
-  select w.name into v_name from public.workspaces w where w.id = p_workspace_id for update;
+  select w.name into v_name from public.workspaces w where w.id = p_workspace_id for no key update;
   if v_name is distinct from btrim(coalesce(p_confirm_name, '')) then
     perform app_private.fail('confirmation_mismatch', 'Type the workspace name exactly to confirm deletion.');
   end if;
@@ -610,7 +610,7 @@ as $$
 declare
   v_conn public.provider_connections%rowtype;
 begin
-  select * into v_conn from public.provider_connections c where c.id = p_connection_id for update;
+  select * into v_conn from public.provider_connections c where c.id = p_connection_id for no key update;
   if not found then
     perform app_private.forbid('Connection not found or access denied.');
   end if;
@@ -664,7 +664,7 @@ as $$
 declare
   v_conn public.provider_connections%rowtype;
 begin
-  select * into v_conn from public.provider_connections c where c.id = p_connection_id for update;
+  select * into v_conn from public.provider_connections c where c.id = p_connection_id for no key update;
   if not found then
     perform app_private.forbid('Connection not found or access denied.');
   end if;
@@ -694,7 +694,7 @@ as $$
 declare
   v_conn public.provider_connections%rowtype;
 begin
-  select * into v_conn from public.provider_connections c where c.id = p_connection_id for update;
+  select * into v_conn from public.provider_connections c where c.id = p_connection_id for no key update;
   if not found then
     perform app_private.forbid('Connection not found or access denied.');
   end if;
@@ -735,7 +735,7 @@ declare
   v_key text := btrim(coalesce(p_api_key, ''));
   v_replaced boolean := false;
 begin
-  select * into v_conn from public.provider_connections c where c.id = p_connection_id for update;
+  select * into v_conn from public.provider_connections c where c.id = p_connection_id for no key update;
   if not found then
     perform app_private.forbid('Connection not found or access denied.');
   end if;
@@ -805,7 +805,7 @@ as $$
 declare
   v_conn public.provider_connections%rowtype;
 begin
-  select * into v_conn from public.provider_connections c where c.id = p_connection_id for update;
+  select * into v_conn from public.provider_connections c where c.id = p_connection_id for no key update;
   if not found then
     return;
   end if;
@@ -980,7 +980,7 @@ begin
     perform app_private.fail('invalid_verified_on', 'Enter the date you verified this price.');
   end if;
 
-  perform 1 from public.workspaces w where w.id = p_workspace_id for update;
+  perform 1 from public.workspaces w where w.id = p_workspace_id for no key update;
   select coalesce(max(p.version), 0) + 1 into v_version
   from public.model_prices p
   where p.workspace_id = p_workspace_id and p.provider = 'openai' and p.model_id = v_model;
@@ -1205,7 +1205,7 @@ declare
   v_version integer;
   v_version_id uuid;
 begin
-  select * into v_tpl from public.templates t where t.id = p_template_id for update;
+  select * into v_tpl from public.templates t where t.id = p_template_id for no key update;
   if not found then
     perform app_private.forbid('Template not found or access denied.');
   end if;
@@ -1279,7 +1279,7 @@ as $$
 declare
   v_tpl public.templates%rowtype;
 begin
-  select * into v_tpl from public.templates t where t.id = p_template_id for update;
+  select * into v_tpl from public.templates t where t.id = p_template_id for no key update;
   if not found then
     perform app_private.forbid('Template not found or access denied.');
   end if;
@@ -1350,7 +1350,7 @@ begin
   else
     select * into v_set from public.probe_sets s
     where s.id = p_probe_set_id and s.workspace_id = p_workspace_id
-    for update;
+    for no key update;
     if not found then
       perform app_private.forbid('Question set not found or access denied.');
     end if;
@@ -1408,7 +1408,7 @@ as $$
 declare
   v_set public.probe_sets%rowtype;
 begin
-  select * into v_set from public.probe_sets s where s.id = p_probe_set_id for update;
+  select * into v_set from public.probe_sets s where s.id = p_probe_set_id for no key update;
   if not found then
     perform app_private.forbid('Question set not found or access denied.');
   end if;

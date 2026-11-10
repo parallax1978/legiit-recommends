@@ -15,7 +15,7 @@ declare
   c public.campaigns%rowtype;
   v_paused integer;
 begin
-  select * into c from public.campaigns cp where cp.id = p_campaign_id for update;
+  select * into c from public.campaigns cp where cp.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -45,7 +45,7 @@ declare
   v_now timestamptz := now();
   v_resumed integer;
 begin
-  select * into c from public.campaigns cp where cp.id = p_campaign_id for update;
+  select * into c from public.campaigns cp where cp.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -80,7 +80,7 @@ declare
   v_canceled integer := 0;
   v_in_flight integer := 0;
 begin
-  select * into c from public.campaigns cp where cp.id = p_campaign_id for update;
+  select * into c from public.campaigns cp where cp.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -99,7 +99,7 @@ begin
     where j.campaign_id = p_campaign_id
       and j.kind <> 'test_conversation'
       and j.status in ('pending', 'queued', 'waiting', 'paused', 'blocked', 'running')
-    for update
+    for no key update
   loop
     if v_job.status = 'running' or exists (
       select 1 from public.provider_attempts a
@@ -143,7 +143,7 @@ declare
   v_now timestamptz := now();
   v_day date := (now() at time zone 'UTC')::date;
 begin
-  select * into c from public.campaigns cp where cp.id = p_campaign_id for update;
+  select * into c from public.campaigns cp where cp.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -216,8 +216,8 @@ begin
     perform app_private.forbid('Job not found or access denied.');
   end if;
   perform app_private.require_role(v_ids.workspace_id, 'admin');
-  select * into c from public.campaigns cp where cp.id = v_ids.campaign_id for update;
-  select * into v_job from public.jobs j where j.id = p_job_id for update;
+  select * into c from public.campaigns cp where cp.id = v_ids.campaign_id for no key update;
+  select * into v_job from public.jobs j where j.id = p_job_id for no key update;
 
   if v_job.status not in ('dead', 'blocked') then
     perform app_private.fail('not_retryable', 'Only failed or blocked jobs can be retried.');
@@ -277,7 +277,7 @@ begin
     perform app_private.forbid('Run not found or access denied.');
   end if;
   perform app_private.require_role(v_run.workspace_id, 'admin');
-  select * into c from public.campaigns cp where cp.id = v_run.campaign_id for update;
+  select * into c from public.campaigns cp where cp.id = v_run.campaign_id for no key update;
   select * into v_old_job from public.jobs j where j.id = v_run.job_id;
   select * into v_rev from public.campaign_revisions r where r.id = v_run.revision_id;
 
@@ -332,7 +332,7 @@ declare
   v_attempt public.provider_attempts%rowtype;
   v_res public.budget_reservations%rowtype;
 begin
-  select * into v_attempt from public.provider_attempts a where a.id = p_attempt_id for update;
+  select * into v_attempt from public.provider_attempts a where a.id = p_attempt_id for no key update;
   if not found then
     perform app_private.forbid('Attempt not found or access denied.');
   end if;
@@ -343,7 +343,7 @@ begin
   if p_resolution not in ('counted_as_spent', 'released') then
     perform app_private.fail('invalid_resolution', 'Choose to count the reserved amount as spent or to release it.');
   end if;
-  select * into v_res from public.budget_reservations r where r.id = v_attempt.reservation_id for update;
+  select * into v_res from public.budget_reservations r where r.id = v_attempt.reservation_id for no key update;
 
   if p_resolution = 'counted_as_spent' then
     update public.budget_reservations

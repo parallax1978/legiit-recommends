@@ -52,7 +52,7 @@ as $$
 declare
   c public.campaigns%rowtype;
 begin
-  select * into c from public.campaigns cp where cp.id = p_campaign_id for update;
+  select * into c from public.campaigns cp where cp.id = p_campaign_id for no key update;
   if not found or c.status not in ('scheduled', 'baseline', 'running', 'finalizing') then
     return;
   end if;
@@ -85,7 +85,7 @@ begin
         select 1 from public.provider_attempts a
         where a.job_id = j.id and a.status in ('started', 'in_flight')
       )
-    for update
+    for no key update
   loop
     perform app_private.pause_job(v_job, p_reason);
     v_count := v_count + 1;
@@ -107,7 +107,7 @@ begin
   for v_job in
     select j.* from public.jobs j
     where j.campaign_id = p_campaign_id and j.status = 'paused'
-    for update
+    for no key update
   loop
     perform app_private.enqueue_job(v_job.id);
     update public.jobs set status_reason = null where id = v_job.id;
@@ -134,7 +134,7 @@ begin
     where j.workspace_id = p_workspace_id
       and j.status = 'paused' and j.status_reason = 'emergency_stop'
       and (j.kind = 'test_conversation' or c.status in ('baseline', 'running', 'finalizing'))
-    for update of j
+    for no key update of j
   loop
     perform app_private.enqueue_job(v_job.id);
     update public.jobs set status_reason = null where id = v_job.id;
@@ -359,7 +359,7 @@ begin
       return null;
     end if;
 
-    select * into v_job from public.jobs j where j.id = (v_msg.message ->> 'job_id')::uuid for update;
+    select * into v_job from public.jobs j where j.id = (v_msg.message ->> 'job_id')::uuid for no key update;
     if not found
        or v_job.queue_msg_id is distinct from v_msg.msg_id
        or v_job.status not in ('queued', 'running', 'waiting') then
@@ -483,12 +483,12 @@ begin
   -- Lock order: campaign, then job (a configuration failure pauses the campaign).
   perform 1 from public.campaigns c
   where c.id = (select j.campaign_id from public.jobs j where j.id = p_job_id)
-  for update;
-  select * into v_job from public.jobs j where j.id = p_job_id for update;
+  for no key update;
+  select * into v_job from public.jobs j where j.id = p_job_id for no key update;
   if not app_private.holds_lease(v_job, p_lease_token, p_fencing_token) then
     return jsonb_build_object('ok', false, 'action', 'stale');
   end if;
-  select * into v_run from public.runs r where r.id = v_job.run_id for update;
+  select * into v_run from public.runs r where r.id = v_job.run_id for no key update;
 
   if v_run.steps_total is null then
     v_count := jsonb_array_length(coalesce(p_plan -> 'turns', '[]'::jsonb));
@@ -596,9 +596,15 @@ begin
     return jsonb_build_object('ok', false, 'action', 'stale');
   end if;
   -- Lock order: campaign, connection, job. Reservations for a connection are fully serialized.
-  select * into v_campaign from public.campaigns c where c.id = v_ids.campaign_id for update;
-  select * into v_conn from public.provider_connections pc where pc.id = v_ids.connection_id for update;
-  select * into v_job from public.jobs j where j.id = p_job_id for update;
+  --
+  -- Row locks in these functions are FOR NO KEY UPDATE, never FOR UPDATE. They exclude each
+  -- other exactly the same way, but they do not conflict with the FOR KEY SHARE locks that
+  -- foreign-key checks take on parent rows. A commit that updates an attempt, or inserts a
+  -- ledger row, key-share-locks its campaign and connection in whatever order the constraint
+  -- triggers fire; with FOR UPDATE here that could deadlock against this function.
+  select * into v_campaign from public.campaigns c where c.id = v_ids.campaign_id for no key update;
+  select * into v_conn from public.provider_connections pc where pc.id = v_ids.connection_id for no key update;
+  select * into v_job from public.jobs j where j.id = p_job_id for no key update;
   if not app_private.holds_lease(v_job, p_lease_token, p_fencing_token) then
     return jsonb_build_object('ok', false, 'action', 'stale');
   end if;
@@ -608,7 +614,7 @@ begin
   v_is_conversation := v_job.kind in ('conversation', 'test_conversation');
 
   if v_is_conversation then
-    select * into v_run from public.runs r where r.id = v_job.run_id for update;
+    select * into v_run from public.runs r where r.id = v_job.run_id for no key update;
     v_turn := app_private.next_turn(v_run.id);
     if v_turn.id is null then
       return jsonb_build_object('ok', false, 'action', 'stale');
@@ -618,7 +624,7 @@ begin
     select * into v_price from public.model_prices p where p.id = v_run.price_id;
     v_attempt_number := v_turn.attempt_count + 1;
   else
-    select * into v_check from public.fresh_checks f where f.id = v_job.fresh_check_id for update;
+    select * into v_check from public.fresh_checks f where f.id = v_job.fresh_check_id for no key update;
     v_purpose := 'fresh_check';
     v_model := v_check.model;
     select * into v_price from public.model_prices p where p.id = v_check.price_id;
@@ -791,7 +797,7 @@ as $$
 declare
   v_job public.jobs%rowtype;
 begin
-  select * into v_job from public.jobs j where j.id = p_job_id for update;
+  select * into v_job from public.jobs j where j.id = p_job_id for no key update;
   if not app_private.holds_lease(v_job, p_lease_token, p_fencing_token) then
     return jsonb_build_object('ok', false, 'action', 'stale');
   end if;
@@ -831,7 +837,7 @@ begin
   set status = 'in_flight', response_id = p_response_id
   where id = p_attempt_id and job_id = p_job_id and status in ('started', 'uncertain');
 
-  select * into v_job from public.jobs j where j.id = p_job_id for update;
+  select * into v_job from public.jobs j where j.id = p_job_id for no key update;
   if not app_private.holds_lease(v_job, p_lease_token, p_fencing_token) then
     return jsonb_build_object('ok', false, 'action', 'stale');
   end if;
@@ -859,7 +865,7 @@ begin
   set poll_count = poll_count + 1, last_polled_at = clock_timestamp()
   where id = p_attempt_id and job_id = p_job_id;
 
-  select * into v_job from public.jobs j where j.id = p_job_id for update;
+  select * into v_job from public.jobs j where j.id = p_job_id for no key update;
   if not app_private.holds_lease(v_job, p_lease_token, p_fencing_token) then
     return jsonb_build_object('ok', false, 'action', 'stale');
   end if;
@@ -962,7 +968,7 @@ declare
   v_cost numeric;
 begin
   select * into v_attempt from public.provider_attempts a where a.id = p_attempt_id;
-  select * into v_res from public.budget_reservations r where r.id = v_attempt.reservation_id for update;
+  select * into v_res from public.budget_reservations r where r.id = v_attempt.reservation_id for no key update;
   select * into v_price from public.model_prices p where p.id = v_attempt.price_id;
 
   v_cost := coalesce(app_private.usage_cost(
@@ -1048,11 +1054,11 @@ declare
   v_mentioned boolean;
   v_next text;
 begin
-  select * into v_attempt from public.provider_attempts a where a.id = p_attempt_id and a.job_id = p_job_id for update;
+  select * into v_attempt from public.provider_attempts a where a.id = p_attempt_id and a.job_id = p_job_id for no key update;
   if not found then
     return jsonb_build_object('ok', false, 'action', 'unknown_attempt');
   end if;
-  select * into v_job from public.jobs j where j.id = p_job_id for update;
+  select * into v_job from public.jobs j where j.id = p_job_id for no key update;
 
   -- Accounting is recorded for the attempt's own request regardless of who holds the job now.
   if v_attempt.status in ('started', 'in_flight', 'uncertain') then
@@ -1085,8 +1091,8 @@ begin
   select * into v_ws from public.workspaces w where w.id = v_job.workspace_id;
 
   if v_job.kind in ('conversation', 'test_conversation') then
-    select * into v_run from public.runs r where r.id = v_job.run_id for update;
-    select * into v_turn from public.run_turns t where t.id = v_attempt.run_turn_id for update;
+    select * into v_run from public.runs r where r.id = v_job.run_id for no key update;
+    select * into v_turn from public.run_turns t where t.id = v_attempt.run_turn_id for no key update;
 
     update public.run_turns
     set status = case when v_completed then 'completed'::public.turn_status else 'incomplete'::public.turn_status end,
@@ -1232,13 +1238,13 @@ begin
   end if;
   -- Lock order everywhere: campaign, then connection, then job.
   if v_class in ('model_unavailable', 'permission_denied', 'invalid_request') then
-    perform 1 from public.campaigns c where c.id = v_attempt.campaign_id for update;
+    perform 1 from public.campaigns c where c.id = v_attempt.campaign_id for no key update;
   end if;
   if v_class in ('quota_exhausted', 'invalid_credentials') then
-    perform 1 from public.provider_connections pc where pc.id = v_attempt.connection_id for update;
+    perform 1 from public.provider_connections pc where pc.id = v_attempt.connection_id for no key update;
   end if;
-  select * into v_attempt from public.provider_attempts a where a.id = p_attempt_id for update;
-  select * into v_job from public.jobs j where j.id = p_job_id for update;
+  select * into v_attempt from public.provider_attempts a where a.id = p_attempt_id for no key update;
+  select * into v_job from public.jobs j where j.id = p_job_id for no key update;
 
   -- Also reconciles an attempt that was presumed lost when its worker now reports a definite outcome.
   if v_attempt.status in ('started', 'in_flight')
@@ -1357,7 +1363,7 @@ as $$
 declare
   v_job public.jobs%rowtype;
 begin
-  select * into v_job from public.jobs j where j.id = p_job_id for update;
+  select * into v_job from public.jobs j where j.id = p_job_id for no key update;
   if not app_private.holds_lease(v_job, p_lease_token, p_fencing_token) then
     return jsonb_build_object('ok', false, 'action', 'stale');
   end if;
@@ -1410,14 +1416,14 @@ begin
 
   select * into v_ws from public.workspaces w where w.id = p_workspace_id;
   if p_campaign_id is not null then
-    perform 1 from public.campaigns c where c.id = p_campaign_id and c.workspace_id = p_workspace_id for update;
+    perform 1 from public.campaigns c where c.id = p_campaign_id and c.workspace_id = p_workspace_id for no key update;
     if not found then
       return jsonb_build_object('ok', false, 'code', 'not_found', 'message', 'Campaign not found.');
     end if;
   end if;
   select * into v_conn from public.provider_connections pc
   where pc.id = p_connection_id and pc.workspace_id = p_workspace_id
-  for update;
+  for no key update;
   if not found or v_conn.archived_at is not null then
     return jsonb_build_object('ok', false, 'code', 'not_found', 'message', 'Connection not found.');
   end if;
@@ -1497,7 +1503,7 @@ declare
   v_attempt public.provider_attempts%rowtype;
   v_status text := coalesce(p_outcome ->> 'status', 'failed');
 begin
-  select * into v_attempt from public.provider_attempts a where a.id = p_attempt_id for update;
+  select * into v_attempt from public.provider_attempts a where a.id = p_attempt_id for no key update;
   if not found or v_attempt.status <> 'started' or v_attempt.job_id is not null then
     return;
   end if;

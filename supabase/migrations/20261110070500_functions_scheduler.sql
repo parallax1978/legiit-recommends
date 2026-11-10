@@ -427,7 +427,7 @@ begin
         j.status in ('pending', 'paused', 'blocked')
         or (p_include_active and j.status in ('queued', 'waiting', 'running'))
       )
-    for update
+    for no key update
   loop
     update public.provider_attempts
     set status = 'uncertain', error_class = 'unresolved_at_campaign_end', finished_at = p_now
@@ -471,7 +471,7 @@ declare
   v_guard integer := 0;
   v_conversation_kinds constant public.job_kind[] := array['conversation', 'check_daily', 'check_baseline']::public.job_kind[];
 begin
-  select * into c from public.campaigns cp where cp.id = p_campaign_id for update;
+  select * into c from public.campaigns cp where cp.id = p_campaign_id for no key update;
   if not found or c.status not in ('scheduled', 'baseline', 'running', 'finalizing') then
     return;
   end if;
@@ -638,7 +638,7 @@ begin
       and (j.status <> 'running' or j.lease_expires_at < p_now - interval '60 seconds')
       and j.updated_at < p_now - interval '60 seconds'
       and not exists (select 1 from pgmq.q_lr_work q where q.msg_id = j.queue_msg_id)
-    for update skip locked
+    for no key update skip locked
   loop
     perform app_private.enqueue_job(v_job.id);
     update public.jobs set status_reason = 'requeued_after_lost_message' where id = v_job.id;
@@ -672,7 +672,7 @@ begin
     select c.id from public.campaigns c
     where c.status in ('scheduled', 'baseline', 'running', 'finalizing')
     order by c.id
-    for update skip locked
+    for no key update skip locked
   loop
     perform app_private.plan_campaign(v_id, p_now);
     v_campaigns := v_campaigns + 1;
@@ -826,7 +826,7 @@ declare
   v_block jsonb;
   v_started integer := 0;
 begin
-  select * into c from public.campaigns cp where cp.id = p_campaign_id for update;
+  select * into c from public.campaigns cp where cp.id = p_campaign_id for no key update;
   if not found or c.status not in ('baseline', 'running', 'finalizing') then
     return 0;
   end if;
@@ -846,7 +846,7 @@ begin
       and j.kind in ('conversation', 'check_daily')
       and j.scheduled_for < p_now - v_grace
     order by j.scheduled_for
-    for update
+    for no key update
   loop
     select * into v_job_rev from public.campaign_revisions r where r.id = v_job.revision_id;
     if v_job_rev.missed_slot_behavior = 'catch_up'
@@ -865,7 +865,7 @@ begin
   end loop;
 
   -- (b) Nothing new is dispatched while stopped or while the connection is failing.
-  select * into v_conn from public.provider_connections pc where pc.id = v_rev.connection_id for update;
+  select * into v_conn from public.provider_connections pc where pc.id = v_rev.connection_id for no key update;
   if v_ws.emergency_stop or v_conn.status <> 'ok' then
     return 0;
   end if;
@@ -889,7 +889,7 @@ begin
         and j.scheduled_for <= p_now
       order by j.scheduled_for, j.slot_index
       limit greatest(v_capacity, 0)
-      for update
+      for no key update
     loop
       select * into v_job_rev from public.campaign_revisions r where r.id = v_job.revision_id;
 
@@ -928,7 +928,7 @@ begin
       and j.scheduled_for <= p_now
     order by j.scheduled_for, j.slot_index
     limit v_capacity
-    for update
+    for no key update
   loop
     select * into v_job_rev from public.campaign_revisions r where r.id = v_job.revision_id;
     if v_job.kind = 'check_daily' then
@@ -1018,7 +1018,7 @@ begin
       and (j.kind = 'test_conversation' or c.status in ('baseline', 'running', 'finalizing'))
       and not w.emergency_stop
       and pc.status = 'ok'
-    for update of j skip locked
+    for no key update of j skip locked
   loop
     perform app_private.enqueue_job(v_job.id);
     update public.jobs set status_reason = null where id = v_job.id;
@@ -1033,7 +1033,7 @@ begin
         where j.campaign_id = c.id and j.status = 'pending' and j.scheduled_for <= p_now
       )
     order by c.id
-    for update of c skip locked
+    for no key update of c skip locked
   loop
     v_dispatched := v_dispatched + app_private.dispatch_campaign(v_id, p_now);
   end loop;

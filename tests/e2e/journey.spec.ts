@@ -115,7 +115,9 @@ test("the owner connects the provider, records prices and verifies a model", asy
   await page.getByLabel("Sharing inputs and outputs with OpenAI").selectOption("disabled");
   await page.getByLabel("Date you checked it").fill(new Date().toISOString().slice(0, 10));
   await page.getByRole("button", { name: "Save record" }).click();
-  await expect(page.getByText("Disabled", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Data sharing" }).getByText("Disabled", { exact: true }),
+  ).toBeVisible();
 });
 
 test("an admin writes prompts and a fresh-check question set", async () => {
@@ -414,7 +416,7 @@ test("launching starts the schedule: baseline checks, then conversations, with r
   await expect(page.getByRole("heading", { name: "Individual checks" })).toBeVisible();
   await page.goto("/usage");
   await expect(page.getByRole("heading", { name: "Estimated spend per day" })).toBeVisible();
-  await expect(page.getByRole("cell", { name: MODEL })).toBeVisible();
+  await expect(page.getByRole("cell", { name: MODEL, exact: true })).toBeVisible();
 });
 
 test("pausing stops dispatch, and results, usage and transcripts can be exported", async () => {

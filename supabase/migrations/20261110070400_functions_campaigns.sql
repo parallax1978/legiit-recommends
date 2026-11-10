@@ -767,7 +767,7 @@ declare
   v_number integer;
   v_revision_id uuid;
 begin
-  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for update;
+  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -821,7 +821,7 @@ declare
     'on_existing_inclusion', 'selection_mode', 'selection_seed'
   ];
 begin
-  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for update;
+  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -831,7 +831,7 @@ begin
   end if;
 
   v_revision_id := coalesce(v_campaign.draft_revision_id, public.begin_campaign_edit(p_campaign_id));
-  select * into v_rev from public.campaign_revisions r where r.id = v_revision_id for update;
+  select * into v_rev from public.campaign_revisions r where r.id = v_revision_id for no key update;
 
   if p_patch ? 'name' then
     if char_length(btrim(coalesce(p_patch ->> 'name', ''))) not between 1 and 120 then
@@ -975,7 +975,7 @@ as $$
 declare
   v_campaign public.campaigns%rowtype;
 begin
-  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for update;
+  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -1032,7 +1032,7 @@ as $$
 declare
   v_campaign public.campaigns%rowtype;
 begin
-  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for update;
+  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -1060,7 +1060,7 @@ as $$
 declare
   v_campaign public.campaigns%rowtype;
 begin
-  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for update;
+  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -1115,7 +1115,7 @@ declare
   v_signature text;
   v_checks_enabled boolean;
 begin
-  select * into v_rev from public.campaign_revisions r where r.id = p_revision_id for update;
+  select * into v_rev from public.campaign_revisions r where r.id = p_revision_id for no key update;
   if v_rev.state <> 'draft' then
     perform app_private.fail('revision_not_draft', 'This configuration has already been applied.');
   end if;
@@ -1242,7 +1242,7 @@ declare
   v_rev public.campaign_revisions%rowtype;
   v_now timestamptz := now();
 begin
-  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for update;
+  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -1299,7 +1299,7 @@ declare
   v_job record;
   v_new_group boolean;
 begin
-  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for update;
+  select * into v_campaign from public.campaigns c where c.id = p_campaign_id for no key update;
   if not found then
     perform app_private.forbid('Campaign not found or access denied.');
   end if;
@@ -1327,7 +1327,7 @@ begin
       and j.revision_id <> v_rev.id
       and j.status = 'pending'
       and (j.kind in ('conversation', 'check_daily') or (v_new_group and j.kind = 'check_baseline'))
-    for update
+    for no key update
   loop
     update public.jobs
     set status = 'canceled', status_reason = 'superseded_by_revision', finished_at = v_now
