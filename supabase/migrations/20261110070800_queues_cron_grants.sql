@@ -126,6 +126,10 @@ grant execute on function public.usage_daily(uuid, date, date, uuid) to authenti
 grant execute on function public.budget_status(uuid) to authenticated;
 grant execute on function public.campaign_plan_preview(uuid) to authenticated;
 grant execute on function public.operational_status(uuid) to authenticated;
+grant execute on function public.campaign_summaries(uuid) to authenticated;
+grant execute on function public.overview_summary(uuid) to authenticated;
+grant execute on function public.variation_coverage(uuid) to authenticated;
+grant execute on function public.campaign_daily_activity(uuid) to authenticated;
 
 -- Service functions: trusted backend only.
 do $$

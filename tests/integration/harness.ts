@@ -20,7 +20,10 @@ import { FakeOpenAI, VALID_KEY_PREFIX } from "../support/fake-openai.ts";
 
 function required(name: string): string {
   const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set. Integration tests need the local Supabase stack (npm run db:start).`);
+  if (!value)
+    throw new Error(
+      `${name} is not set. Integration tests need the local Supabase stack (npm run db:start).`,
+    );
   return value;
 }
 
@@ -51,7 +54,7 @@ export function db(): pg.Pool {
 }
 
 /** Runs SQL as the database owner (test setup and assertions only). */
-export async function sql<Row extends Record<string, unknown> = Record<string, unknown>>(
+export async function sql<Row extends object = Record<string, unknown>>(
   text: string,
   params: unknown[] = [],
 ): Promise<Row[]> {
@@ -114,7 +117,11 @@ export async function createUser(label = "user"): Promise<TestUser> {
   userCounter += 1;
   const email = `${label}-${Date.now().toString(36)}-${userCounter}@lr.test`;
   const password = `Pw-${Math.random().toString(36).slice(2)}-${Date.now()}`;
-  const { data, error } = await admin().auth.admin.createUser({ email, password, email_confirm: true });
+  const { data, error } = await admin().auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
   if (error || !data.user) throw new Error(`createUser failed: ${error?.message}`);
   const client = anonClient();
   const signedIn = await client.auth.signInWithPassword({ email, password });
@@ -123,10 +130,17 @@ export async function createUser(label = "user"): Promise<TestUser> {
 }
 
 /** Calls a client RPC and returns its data, throwing with the database's message on error. */
-export async function rpc<T = unknown>(client: Client, fn: string, args: Record<string, unknown> = {}): Promise<T> {
+export async function rpc<T = unknown>(
+  client: Client,
+  fn: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
   const { data, error } = await client.rpc(fn, args);
   if (error) {
-    const failure = new Error(`${fn}: ${error.message}`) as Error & { code?: string; detail?: string };
+    const failure = new Error(`${fn}: ${error.message}`) as Error & {
+      code?: string;
+      detail?: string;
+    };
     failure.code = error.code;
     failure.detail = error.details ?? undefined;
     throw failure;
@@ -149,7 +163,10 @@ export async function createWorkspace(name = "Test workspace"): Promise<Workspac
   return { id: result.workspace_id, owner };
 }
 
-export async function addMember(workspace: Workspace, role: "owner" | "admin" | "member"): Promise<TestUser> {
+export async function addMember(
+  workspace: Workspace,
+  role: "owner" | "admin" | "member",
+): Promise<TestUser> {
   const user = await createUser(role);
   const result = await rpc<{ outcome: string }>(admin(), "svc_invite_member", {
     p_workspace_id: workspace.id,
@@ -157,7 +174,8 @@ export async function addMember(workspace: Workspace, role: "owner" | "admin" | 
     p_email: user.email,
     p_role: role,
   });
-  if (result.outcome !== "added") throw new Error(`addMember: unexpected outcome ${result.outcome}`);
+  if (result.outcome !== "added")
+    throw new Error(`addMember: unexpected outcome ${result.outcome}`);
   return user;
 }
 
@@ -175,26 +193,46 @@ export function opsContext(user: TestUser, fake: FakeOpenAI): OpsContext {
   };
 }
 
-export async function ops(user: TestUser, fake: FakeOpenAI, action: string, input: Record<string, unknown>): Promise<OpsResult> {
+export async function ops(
+  user: TestUser,
+  fake: FakeOpenAI,
+  action: string,
+  input: Record<string, unknown>,
+): Promise<OpsResult> {
   return runOpsAction(opsContext(user, fake), action, input);
 }
 
-export function engineDeps(fake: FakeOpenAI, overrides: Partial<EngineDeps["config"]> = {}, faults?: FaultHooks): EngineDeps {
+export function engineDeps(
+  fake: FakeOpenAI,
+  overrides: Partial<EngineDeps["config"]> = {},
+  faults?: FaultHooks,
+): EngineDeps {
   return {
     db: createSupabaseEngineDb(admin()),
     createProvider: (apiKey) => createOpenAIProvider({ apiKey, baseURL: fake.baseURL }),
-    config: { ...DEFAULT_ENGINE_CONFIG, workerId: `test-${Math.random().toString(36).slice(2, 8)}`, ...overrides },
+    config: {
+      ...DEFAULT_ENGINE_CONFIG,
+      workerId: `test-${Math.random().toString(36).slice(2, 8)}`,
+      ...overrides,
+    },
     faults,
   };
 }
 
 /** Processes one unit, as one worker invocation would. */
-export function work(fake: FakeOpenAI, overrides: Partial<EngineDeps["config"]> = {}, faults?: FaultHooks): Promise<UnitOutcome> {
+export function work(
+  fake: FakeOpenAI,
+  overrides: Partial<EngineDeps["config"]> = {},
+  faults?: FaultHooks,
+): Promise<UnitOutcome> {
   return processOneUnit(engineDeps(fake, overrides, faults));
 }
 
 /** One scheduler pass at the given instant (defaults to now). */
-export async function tick(now?: Date, plan = true): Promise<{ plan: unknown; dispatch: { dispatched: number; released: number; wakes: number } }> {
+export async function tick(
+  now?: Date,
+  plan = true,
+): Promise<{ plan: unknown; dispatch: { dispatched: number; released: number; wakes: number } }> {
   return rpc(admin(), "svc_tick", { p_now: now ? now.toISOString() : null, p_plan: plan });
 }
 
@@ -231,7 +269,13 @@ export interface ConnectionFixture {
   model: string;
 }
 
-export async function addPrice(owner: TestUser, workspaceId: string, model: string, input = 1, output = 4): Promise<void> {
+export async function addPrice(
+  owner: TestUser,
+  workspaceId: string,
+  model: string,
+  input = 1,
+  output = 4,
+): Promise<void> {
   await rpc(owner.client, "add_model_price", {
     p_workspace_id: workspaceId,
     p_price: {
@@ -250,7 +294,13 @@ export async function addPrice(owner: TestUser, workspaceId: string, model: stri
 export async function createConnection(
   workspace: Workspace,
   fake: FakeOpenAI,
-  options: { model?: string; dailyBudget?: number; totalBudget?: number | null; maxConcurrent?: number; verifyCap?: number } = {},
+  options: {
+    model?: string;
+    dailyBudget?: number;
+    totalBudget?: number | null;
+    maxConcurrent?: number;
+    verifyCap?: number;
+  } = {},
 ): Promise<ConnectionFixture> {
   const model = options.model ?? "fake-chat-1";
   const id = await rpc<string>(workspace.owner.client, "create_connection", {
@@ -260,7 +310,10 @@ export async function createConnection(
     p_total_budget_usd: options.totalBudget ?? null,
     p_max_concurrent_requests: options.maxConcurrent ?? 4,
   });
-  const stored = await ops(workspace.owner, fake, "connection.set_credential", { connection_id: id, api_key: VALID_KEY });
+  const stored = await ops(workspace.owner, fake, "connection.set_credential", {
+    connection_id: id,
+    api_key: VALID_KEY,
+  });
   if (!stored.ok) throw new Error(`set_credential failed: ${stored.message}`);
   await addPrice(workspace.owner, workspace.id, model);
   const verified = await ops(workspace.owner, fake, "model.verify", {
@@ -296,10 +349,15 @@ export interface CampaignFixture {
   id: string;
   revisionId: string;
   probeSetId: string | null;
-  templateIds: Record<string, string[]>;
+  templateIds: { initial: string[]; inclusion: string[]; revision: string[] };
 }
 
-async function makeTemplates(user: TestUser, workspaceId: string, kind: string, bodies: string[]): Promise<string[]> {
+async function makeTemplates(
+  user: TestUser,
+  workspaceId: string,
+  kind: string,
+  bodies: string[],
+): Promise<string[]> {
   return rpc<string[]>(user.client, "create_templates", {
     p_workspace_id: workspaceId,
     p_kind: kind,
@@ -319,14 +377,27 @@ export async function createCampaign(
     p_name: options.name ?? "Coffee subscriptions",
   });
 
-  const initial = await makeTemplates(user, workspace.id, "initial_question",
-    options.initialQuestions ?? ["What are the best {{category}} in {{location}}?"]);
-  const inclusion = await makeTemplates(user, workspace.id, "inclusion_request",
-    options.inclusionRequests ?? ['Please add "{{business_name}}" ({{website_url}}) to that list.']);
-  const revision = await makeTemplates(user, workspace.id, "revision_request",
-    options.revisionRequests ?? ["Can you show me the complete revised list?"]);
+  const initial = await makeTemplates(
+    user,
+    workspace.id,
+    "initial_question",
+    options.initialQuestions ?? ["What are the best {{category}} in {{location}}?"],
+  );
+  const inclusion = await makeTemplates(
+    user,
+    workspace.id,
+    "inclusion_request",
+    options.inclusionRequests ?? ['Please add "{{business_name}}" ({{website_url}}) to that list.'],
+  );
+  const revision = await makeTemplates(
+    user,
+    workspace.id,
+    "revision_request",
+    options.revisionRequests ?? ["Can you show me the complete revised list?"],
+  );
   const extras: string[][] = [];
-  for (const bodies of options.extraSteps ?? []) extras.push(await makeTemplates(user, workspace.id, "extra_step", bodies));
+  for (const bodies of options.extraSteps ?? [])
+    extras.push(await makeTemplates(user, workspace.id, "extra_step", bodies));
 
   let probeSetId: string | null = null;
   const questions =
@@ -404,7 +475,9 @@ export async function launch(workspace: Workspace, campaign: CampaignFixture): P
 }
 
 export async function campaignStatus(campaignId: string): Promise<string> {
-  const [row] = await sql<{ status: string }>("select status from public.campaigns where id = $1", [campaignId]);
+  const [row] = await sql<{ status: string }>("select status from public.campaigns where id = $1", [
+    campaignId,
+  ]);
   return row!.status;
 }
 
@@ -414,13 +487,18 @@ export async function startFake(): Promise<FakeOpenAI> {
 }
 
 /** Expects a promise to reject with a database error carrying the given machine code. */
-export async function expectDbError(promise: Promise<unknown>, detailOrCode: string): Promise<Error> {
+export async function expectDbError(
+  promise: Promise<unknown>,
+  detailOrCode: string,
+): Promise<Error> {
   try {
     await promise;
   } catch (error) {
     const failure = error as Error & { code?: string; detail?: string };
     if (failure.detail === detailOrCode || failure.code === detailOrCode) return failure;
-    throw new Error(`Expected error "${detailOrCode}" but got code=${failure.code} detail=${failure.detail}: ${failure.message}`);
+    throw new Error(
+      `Expected error "${detailOrCode}" but got code=${failure.code} detail=${failure.detail}: ${failure.message}`,
+    );
   }
   throw new Error(`Expected error "${detailOrCode}" but the call succeeded`);
 }

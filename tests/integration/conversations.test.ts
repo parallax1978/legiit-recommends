@@ -67,12 +67,22 @@ describe("conversation execution", () => {
     await dispatchNextSlots(campaign.id, 2);
     await drain(fake);
 
-    const runs = await sql<{ id: string; status: string; steps_completed: number; target_in_first_response: boolean }>(
+    const runs = await sql<{
+      id: string;
+      status: string;
+      steps_completed: number;
+      target_in_first_response: boolean;
+    }>(
       "select id, status, steps_completed, target_in_first_response from public.runs where campaign_id = $1 order by ordinal",
       [campaign.id],
     );
     expect(runs).toHaveLength(2);
-    for (const run of runs) expect(run).toMatchObject({ status: "completed", steps_completed: 3, target_in_first_response: false });
+    for (const run of runs)
+      expect(run).toMatchObject({
+        status: "completed",
+        steps_completed: 3,
+        target_in_first_response: false,
+      });
 
     const turns = await sql<TurnRow>(
       "select run_id, step_index, status, rendered_prompt, response_id, previous_response_id, output_text, inclusion, rank, input_tokens, cost_usd from public.run_turns where campaign_id = $1 order by run_id, step_index",
@@ -90,8 +100,12 @@ describe("conversation execution", () => {
       const [first, second, third] = own as [TurnRow, TurnRow, TurnRow];
 
       // Exact prompts were rendered from the campaign's own inputs.
-      expect(first.rendered_prompt).toBe("What are the best coffee subscription services in Portland?");
-      expect(second.rendered_prompt).toBe(`Please add "${TARGET.business_name}" (${TARGET.website_url}) to that list.`);
+      expect(first.rendered_prompt).toBe(
+        "What are the best coffee subscription services in Portland?",
+      );
+      expect(second.rendered_prompt).toBe(
+        `Please add "${TARGET.business_name}" (${TARGET.website_url}) to that list.`,
+      );
       expect(third.rendered_prompt).toBe("Can you show me the complete revised list?");
 
       // Each turn continues from the actual previous response of the same run.
@@ -99,7 +113,14 @@ describe("conversation execution", () => {
       expect(second.previous_response_id).toBe(first.response_id);
       expect(third.previous_response_id).toBe(second.response_id);
 
-      const sentFirst = requests.find((r) => r.body!.input === first.rendered_prompt && fake.storedResponse(first.response_id)?.inputs[0] === r.body!.input && !r.body!.previous_response_id && requests.indexOf(r) >= 0 && fake.storedResponse(first.response_id));
+      const sentFirst = requests.find(
+        (r) =>
+          r.body!.input === first.rendered_prompt &&
+          fake.storedResponse(first.response_id)?.inputs[0] === r.body!.input &&
+          !r.body!.previous_response_id &&
+          requests.indexOf(r) >= 0 &&
+          fake.storedResponse(first.response_id),
+      );
       expect(sentFirst).toBeDefined();
       const sentSecond = requests.find((r) => r.body!.previous_response_id === first.response_id)!;
       const sentThird = requests.find((r) => r.body!.previous_response_id === second.response_id)!;
@@ -114,7 +135,8 @@ describe("conversation execution", () => {
       ]);
 
       // Saved answers are the provider's actual answers, never prewritten text.
-      for (const turn of own) expect(turn.output_text).toBe(fake.storedResponse(turn.response_id)!.output_text);
+      for (const turn of own)
+        expect(turn.output_text).toBe(fake.storedResponse(turn.response_id)!.output_text);
 
       // Measurement: absent in the first answer, present after the inclusion request.
       expect(first.inclusion).toBe("not_mentioned");
@@ -129,7 +151,7 @@ describe("conversation execution", () => {
     // references a response of the other.
     const firstTurnRequests = requests.filter((r) => !r.body!.previous_response_id);
     expect(firstTurnRequests).toHaveLength(2);
-    const [runA, runB] = runs as [{ id: string }, { id: string }];
+    const [runA, runB] = runs as unknown as [{ id: string }, { id: string }];
     const idsA = new Set(turns.filter((t) => t.run_id === runA.id).map((t) => t.response_id));
     const idsB = new Set(turns.filter((t) => t.run_id === runB.id).map((t) => t.response_id));
     for (const turn of turns) {
@@ -213,26 +235,50 @@ describe("conversation execution", () => {
     await dispatchNextSlots(early.id, 1);
     await drain(fake);
 
-    const [earlyRun] = await sql<{ id: string; status: string; target_in_first_response: boolean; steps_completed: number }>(
+    const [earlyRun] = await sql<{
+      id: string;
+      status: string;
+      target_in_first_response: boolean;
+      steps_completed: number;
+    }>(
       "select id, status, target_in_first_response, steps_completed from public.runs where campaign_id = $1",
       [early.id],
     );
-    expect(earlyRun).toMatchObject({ status: "completed_early", target_in_first_response: true, steps_completed: 1 });
-    const earlyTurns = await sql<{ step_index: number; status: string; rank: number | null; inclusion: string | null }>(
+    expect(earlyRun).toMatchObject({
+      status: "completed_early",
+      target_in_first_response: true,
+      steps_completed: 1,
+    });
+    const earlyTurns = await sql<{
+      step_index: number;
+      status: string;
+      rank: number | null;
+      inclusion: string | null;
+    }>(
       "select step_index, status, rank, inclusion from public.run_turns where run_id = $1 order by step_index",
       [earlyRun!.id],
     );
     expect(earlyTurns.map((turn) => turn.status)).toEqual(["completed", "skipped", "skipped"]);
     expect(earlyTurns[0]).toMatchObject({ inclusion: "included", rank: 2 });
 
-    const [fullRun] = await sql<{ status: string; target_in_first_response: boolean; steps_completed: number }>(
+    const [fullRun] = await sql<{
+      status: string;
+      target_in_first_response: boolean;
+      steps_completed: number;
+    }>(
       "select status, target_in_first_response, steps_completed from public.runs where campaign_id = $1",
       [full.id],
     );
-    expect(fullRun).toMatchObject({ status: "completed", target_in_first_response: true, steps_completed: 3 });
+    expect(fullRun).toMatchObject({
+      status: "completed",
+      target_in_first_response: true,
+      steps_completed: 3,
+    });
 
     // Only the "continue" campaign sent an inclusion request.
-    const inclusionRequests = fake.responseRequests().filter((r) => String(r.body!.input).startsWith("Please add"));
+    const inclusionRequests = fake
+      .responseRequests()
+      .filter((r) => String(r.body!.input).startsWith("Please add"));
     expect(inclusionRequests).toHaveLength(1);
   });
 
@@ -241,14 +287,23 @@ describe("conversation execution", () => {
     const connection = await createConnection(workspace, fake);
     const campaign = await createCampaign(workspace, connection, {
       questions: null,
-      extraSteps: [["Which of these would you pick for a small office in {{location}}?"], ["Thanks. Summarize the list once more."]],
+      extraSteps: [
+        ["Which of these would you pick for a small office in {{location}}?"],
+        ["Thanks. Summarize the list once more."],
+      ],
     });
     fake.reset();
     await launch(workspace, campaign);
     await dispatchNextSlots(campaign.id, 1);
     await drain(fake);
 
-    const turns = await sql<{ step_index: number; step_kind: string; status: string; response_id: string; previous_response_id: string | null }>(
+    const turns = await sql<{
+      step_index: number;
+      step_kind: string;
+      status: string;
+      response_id: string;
+      previous_response_id: string | null;
+    }>(
       "select step_index, step_kind, status, response_id, previous_response_id from public.run_turns where campaign_id = $1 order by step_index",
       [campaign.id],
     );
@@ -270,8 +325,15 @@ describe("conversation execution", () => {
     const connection = await createConnection(workspace, fake, { maxConcurrent: 8 });
     const campaign = await createCampaign(workspace, connection, {
       questions: null,
-      initialQuestions: ["Best {{category}}?", "Top {{category}} right now?", "Which {{category}} are worth it?"],
-      inclusionRequests: ['Add "{{business_name}}" please.', 'Could you include "{{business_name}}" as well?'],
+      initialQuestions: [
+        "Best {{category}}?",
+        "Top {{category}} right now?",
+        "Which {{category}} are worth it?",
+      ],
+      inclusionRequests: [
+        'Add "{{business_name}}" please.',
+        'Could you include "{{business_name}}" as well?',
+      ],
       config: { max_concurrency: 6, conversations_per_day: 48 },
     });
     fake.reset();
@@ -280,7 +342,12 @@ describe("conversation execution", () => {
     await dispatchNextSlots(campaign.id, 6);
     await drain(fake);
 
-    const runs = await sql<{ ordinal: number; combination_index: string; combination: { template_version_id: string }[]; selection_seed: string }>(
+    const runs = await sql<{
+      ordinal: number;
+      combination_index: string;
+      combination: { template_version_id: string }[];
+      selection_seed: string;
+    }>(
       "select ordinal, combination_index, combination, selection_seed from public.runs where campaign_id = $1 order by ordinal",
       [campaign.id],
     );
@@ -305,7 +372,9 @@ describe("conversation execution", () => {
     const campaign = await createCampaign(workspace, connection, { questions: null });
     fake.reset();
 
-    const runId = await rpc<string>(workspace.owner.client, "request_test_conversation", { p_campaign_id: campaign.id });
+    const runId = await rpc<string>(workspace.owner.client, "request_test_conversation", {
+      p_campaign_id: campaign.id,
+    });
     expect(await campaignStatus(campaign.id)).toBe("draft");
     await drain(fake);
 
@@ -320,10 +389,16 @@ describe("conversation execution", () => {
       [campaign.id],
     );
     expect(ledger).toHaveLength(3);
-    expect(ledger.every((row) => row.is_test && row.purpose === "conversation_turn" && Number(row.cost_usd) > 0)).toBe(true);
+    expect(
+      ledger.every(
+        (row) => row.is_test && row.purpose === "conversation_turn" && Number(row.cost_usd) > 0,
+      ),
+    ).toBe(true);
 
     // Test conversations never count as campaign results.
-    const metrics = await rpc<unknown[]>(workspace.owner.client, "campaign_conversation_metrics", { p_campaign_id: campaign.id });
+    const metrics = await rpc<unknown[]>(workspace.owner.client, "campaign_conversation_metrics", {
+      p_campaign_id: campaign.id,
+    });
     expect(metrics).toEqual([]);
   });
 });
