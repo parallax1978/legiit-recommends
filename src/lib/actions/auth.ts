@@ -96,8 +96,15 @@ export async function requestPasswordReset(
   const { error } = await supabase.auth.resetPasswordForEmail(email.data);
   if (error) {
     // Logged for the operator only. The reply stays the same whatever happened, so it cannot
-    // be used to learn which addresses have an account.
-    console.error(JSON.stringify({ event: "password_reset_email_failed", code: error.code }));
+    // be used to learn which addresses have an account. Supabase gives a code when it refuses
+    // a request; a failure while sending, or no answer at all, comes with a status only.
+    console.error(
+      JSON.stringify({
+        event: "password_reset_email_failed",
+        code: error.code,
+        status: error.status,
+      }),
+    );
   }
   // The reply cannot promise delivery, because it has to read the same when the send was
   // refused: Supabase's built-in email service delivers only to the project's Supabase team
@@ -105,7 +112,7 @@ export async function requestPasswordReset(
   // whatever the sender. It names no remedy either: the one-time link the operator can
   // create is for workspace owners (README, Recovery), and this reply is shown to everyone.
   return ok(
-    "If an account exists for that address, a reset link has been requested. It can take a few minutes and may land in spam. Emails are limited per address and per hour, so wait a few minutes before asking again. If nothing arrives, ask whoever operates this installation for help.",
+    "If an account exists for that address, a reset link has been requested. It can take a few minutes and may land in spam. Emails are limited per address and per hour, so wait at least a few minutes before asking again. If nothing arrives, ask whoever operates this installation for help.",
   );
 }
 

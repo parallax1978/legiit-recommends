@@ -11,7 +11,7 @@ export interface SignInFailure {
  * None of the three messages depends on whether the account exists. Only a rejection of the
  * credentials themselves says "do not match": telling someone their correct password is wrong
  * while the Auth service is down or rate limiting sends them to a password reset they do not
- * need (and, without email delivery, cannot complete).
+ * need (and, where the reset email cannot reach them, cannot complete).
  */
 export function signInFailure(error: {
   status?: number;

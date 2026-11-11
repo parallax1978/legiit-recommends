@@ -478,26 +478,39 @@ describe("reads through the Management API", () => {
 });
 
 describe("a refused invitation email", () => {
+  const wayAround =
+    "To get in without an email, run the command again with --link to get a one-time link, " +
+    "which needs no email.";
+
   it("names the built-in service's team-only rule only when Supabase says that is the reason", () => {
-    const hint = inviteFailureHint({ code: "email_address_not_authorized", status: 400 });
+    const hint = inviteFailureHint({ code: "email_address_not_authorized" });
     expect(hint).toContain("only to the people on the project's Supabase team");
     expect(hint).toContain("--link");
   });
 
-  it("says the limit was reached, not that the address is refused, for a rate limit", () => {
-    for (const error of [{ code: "over_email_send_rate_limit", status: 429 }, { status: 429 }]) {
-      const hint = inviteFailureHint(error);
-      expect(hint).toContain("as many emails as it may for now");
-      expect(hint).not.toContain("Supabase team");
-      expect(hint).toContain("--link");
+  it("says the sending limit was reached only for the code that says so", () => {
+    const hint = inviteFailureHint({ code: "over_email_send_rate_limit" });
+    expect(hint).toContain("as many emails as it may for now");
+    expect(hint).not.toContain("Supabase team");
+    expect(hint).toContain("--link");
+  });
+
+  it("offers no link for an address Supabase rejects, because the link would be refused too", () => {
+    for (const code of ["validation_failed", "email_address_invalid"]) {
+      expect(inviteFailureHint({ code })).toBe(
+        "Supabase does not accept this address. Check it for a typing mistake.",
+      );
     }
   });
 
   it("gives no cause for a failure it cannot identify, only the way around it", () => {
-    for (const error of [{ code: "unexpected_failure", status: 500 }, {}, { code: null }]) {
-      const hint = inviteFailureHint(error);
-      expect(hint).not.toMatch(/built-in|Supabase team|as many emails/);
-      expect(hint).toContain("--link");
+    // What the Auth client hands over: a failing sender is a 500 without a code, and a 429
+    // without the email code says nothing about which limit it was.
+    const failingSender: { code?: string; status: number } = { status: 500 };
+    const bareLimit: { code?: string; status: number } = { status: 429 };
+    const others = [{}, { code: null }, { code: "over_request_rate_limit" }];
+    for (const error of [failingSender, bareLimit, ...others]) {
+      expect(inviteFailureHint(error)).toBe(wayAround);
     }
   });
 });

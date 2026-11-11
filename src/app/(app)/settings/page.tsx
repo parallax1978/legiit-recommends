@@ -258,7 +258,7 @@ async function MembersTab({ session, supabase }: { session: Session; supabase: S
         <Card>
           <CardHeader
             title="Invite a person"
-            description="Access is by invitation only. The person receives an email with a link to set a password."
+            description="Access is by invitation only. Someone who already has an account here is added at once; anyone else is emailed a link to set a password."
           />
           <CardBody>
             <InviteForm workspaceId={workspaceId} />

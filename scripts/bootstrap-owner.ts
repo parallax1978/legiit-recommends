@@ -7,8 +7,9 @@
  *   1. Grants the email address the right to create one workspace.
  *   2. Makes sure an account exists for it, in one of three ways:
  *        - default: sends a Supabase invitation email; the owner sets a password from the link.
- *          Supabase's built-in email service delivers it only to people on the project's
- *          Supabase team (README, Email);
+ *          An address that already has a confirmed account gets no email and keeps its
+ *          password. Supabase's built-in email service delivers only to people on the
+ *          project's Supabase team (README, Email);
  *        - --link: prints a one-time link instead of sending anything, so no email delivery is
  *          needed. For an account that already has a password the link resets it, which also
  *          makes this the way back in for an owner who is locked out;
