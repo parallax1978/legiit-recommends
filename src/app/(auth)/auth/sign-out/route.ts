@@ -1,9 +1,7 @@
 import { cookies } from "next/headers";
 import { WORKSPACE_COOKIE } from "@/lib/session";
+import { SESSION_COOKIE } from "@/lib/session-end";
 import { createClient } from "@/lib/supabase/server";
-
-/** The Supabase session cookie, including the numbered parts a long session is split into. */
-const SESSION_COOKIE = /^sb-.+-auth-token(\.\d+)?$/;
 
 /**
  * Signs out. It is a plain form POST to a fixed address rather than a server action, for two
@@ -25,7 +23,11 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signOut();
+  // This session only. The default ends every session of the account, so signing out in one
+  // browser would also end the work of the same person, or of anyone sharing the account, in
+  // every other browser: there the pages keep loading, and requests that ask the Auth server
+  // start failing.
+  const { error } = await supabase.auth.signOut({ scope: "local" });
   const cookieStore = await cookies();
   if (error) {
     // The Auth service could not be told (it is down or unreachable) and the client keeps the

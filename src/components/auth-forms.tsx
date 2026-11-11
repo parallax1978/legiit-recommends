@@ -61,11 +61,17 @@ export function SignInForm() {
   const params = useSearchParams();
   const { state, action, onSubmit, pending } = useFormAction(signIn);
   const linkError = LINK_ERRORS[params.get("error") ?? ""];
+  const ended = params.get("ended") === "1";
   return (
     <form action={action} onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       {linkError && !state ? (
         <Callout tone="warn" role="alert">
           {linkError}
+        </Callout>
+      ) : null}
+      {ended && !linkError && !state ? (
+        <Callout tone="info" role="status">
+          Your session has ended. Sign in again to continue; nothing you saved was lost.
         </Callout>
       ) : null}
       <FormMessage state={state} />

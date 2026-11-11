@@ -33,7 +33,7 @@ async function Overview() {
   const isAdmin = hasRole(session.role, "admin");
   const isOwner = hasRole(session.role, "owner");
 
-  const [summaryResult, campaignsResult, templates, probeSets] = await Promise.all([
+  const [summaryResult, campaignsResult, templates] = await Promise.all([
     supabase.rpc("overview_summary", { p_workspace_id: workspaceId }),
     supabase.rpc("campaign_summaries", { p_workspace_id: workspaceId }),
     supabase
@@ -42,11 +42,6 @@ async function Overview() {
       .eq("workspace_id", workspaceId)
       .is("archived_at", null)
       .neq("kind", "fresh_check"),
-    supabase
-      .from("probe_sets")
-      .select("id", { count: "exact", head: true })
-      .eq("workspace_id", workspaceId)
-      .is("archived_at", null),
   ]);
   if (summaryResult.error) throw new Error("The overview could not be loaded.");
   const summary = summaryResult.data as unknown as OverviewSummary;
@@ -75,13 +70,6 @@ async function Overview() {
       title: "Write your prompts",
       text: "Add wordings for the question, the inclusion request and the revised-list request.",
       href: "/library",
-      role: "admin" as const,
-    },
-    {
-      done: (probeSets.count ?? 0) > 0,
-      title: "Create a fresh-check question set",
-      text: "Independent questions asked with no conversation history.",
-      href: "/library?tab=question-sets",
       role: "admin" as const,
     },
     {
@@ -162,7 +150,7 @@ async function Overview() {
             description="Nothing runs until a campaign is launched. These steps prepare one."
           />
           <CardBody>
-            <ol className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <ol className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
               {steps.map((step, index) => {
                 const allowed = step.role === "owner" ? isOwner : isAdmin;
                 return (

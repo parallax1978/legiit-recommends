@@ -321,9 +321,12 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
                         {formatDateTime(preview.planned_end_at, preview.timezone)} ·{" "}
                       </>
                     )}
-                    {formatNumber(preview.planned_conversations)} conversations over{" "}
-                    {formatNumber(preview.active_days)} active day
+                    {formatNumber(preview.planned_conversations)} conversations on{" "}
+                    {formatNumber(preview.active_days)} calendar day
                     {preview.active_days === 1 ? "" : "s"}
+                    {preview.starts_at_launch && preview.active_days > 1
+                      ? " (the first and last are part days)"
+                      : ""}
                   </p>
                   {preview.first_conversation_at ? (
                     <p className="text-ink-muted mb-3 text-[13px]">
@@ -374,15 +377,17 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
                   </TableWrap>
                   {preview.active_days > preview.days_listed ? (
                     <p className="text-ink-muted mt-2 text-xs">
-                      Showing the first {preview.days_listed} of {preview.active_days} active days.
+                      Showing the first {preview.days_listed} of {preview.active_days} days.
                     </p>
                   ) : null}
-                  <p className="text-ink-muted mt-3 text-xs">
-                    {formatNumber(preview.baseline_checks)} baseline fresh checks run at the start,
-                    before any conversation. {formatNumber(preview.final_checks)} final fresh checks
-                    run after the last conversation has resolved; anything still unresolved then is
-                    recorded as such and excluded.
-                  </p>
+                  {preview.baseline_checks + preview.final_checks > 0 ? (
+                    <p className="text-ink-muted mt-3 text-xs">
+                      {formatNumber(preview.baseline_checks)} baseline fresh checks run at the
+                      start, before any conversation. {formatNumber(preview.final_checks)} final
+                      fresh checks run after the last conversation has resolved; anything still
+                      unresolved then is recorded as such and excluded.
+                    </p>
+                  ) : null}
                 </>
               )}
             </CardBody>

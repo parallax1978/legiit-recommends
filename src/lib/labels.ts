@@ -39,9 +39,9 @@ const CAMPAIGN: Record<string, StatusLabel> = {
     hint: "No new work is dispatched until the campaign is resumed.",
   },
   finalizing: {
-    label: "Final checks",
+    label: "Finishing",
     tone: "brand",
-    hint: "Conversations have ended. Final fresh checks are being collected.",
+    hint: "No new conversations start. The last ones are being recorded, then any final fresh checks run.",
   },
   completed: { label: "Completed", tone: "neutral", hint: "All scheduled work has finished." },
   canceled: {

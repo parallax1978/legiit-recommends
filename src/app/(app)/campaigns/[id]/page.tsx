@@ -579,7 +579,9 @@ async function OverviewTab({
           <p className="border-line-strong bg-surface text-ink-muted rounded-2xl border border-dashed px-4 py-8 text-center text-[13px]">
             No conversations yet.{" "}
             {campaign.status === "scheduled" || campaign.status === "baseline"
-              ? "They begin after the baseline fresh checks."
+              ? (revision.baseline_samples ?? 0) > 0
+                ? "They begin after the baseline fresh checks."
+                : "They begin at the start time."
               : ""}
           </p>
         ) : (

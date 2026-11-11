@@ -491,7 +491,7 @@ describe("what a campaign needs before launch", () => {
     ).toEqual(["start_locked"]);
   });
 
-  it("does not let a launched campaign drop its start", async () => {
+  it("keeps the start of a launched campaign when a save sends none", async () => {
     const workspace = await createWorkspace();
     const connection = await createConnection(workspace, fake);
     // Launched, but waiting for a start two days away.
@@ -502,34 +502,91 @@ describe("what a campaign needs before launch", () => {
       endAt: new Date(inTwoDays.getTime() + 3 * 86_400_000),
     });
     await launch(workspace, campaign);
-    const [state] = await sql<{ status: string }>(
-      "select status from public.campaigns where id = $1",
-      [campaign.id],
-    );
-    expect(state!.status).toBe("scheduled");
+    const status = async () =>
+      (
+        await sql<{ status: string }>("select status from public.campaigns where id = $1", [
+          campaign.id,
+        ])
+      )[0]!.status;
+    expect(await status()).toBe("scheduled");
 
-    await rpc(workspace.owner.client, "save_campaign_draft", {
+    // What an editor opened before the launch sends when it is used again afterwards.
+    const pendingId = await rpc<string>(workspace.owner.client, "save_campaign_draft", {
       p_campaign_id: campaign.id,
-      p_patch: { config: { start_at: null } },
+      p_patch: { config: { start_at: null, conversations_per_day: 48 } },
+    });
+    expect(await revisionRow(pendingId, "start_at, conversations_per_day")).toEqual({
+      start_at: inTwoDays,
+      conversations_per_day: 48,
     });
     const check = await launchCheck(workspace.owner.client, campaign.id);
-    expect(check.problems.map((problem) => [problem.code, problem.field])).toEqual([
-      ["required", "start_at"],
+    expect(check.problems).toEqual([]);
+    await rpc(workspace.owner.client, "apply_campaign_changes", {
+      p_campaign_id: campaign.id,
+      p_expected_revision_id: check.revision_id,
+    });
+    // Nothing started early: the campaign still waits for the start it was launched with.
+    expect(await activeRevision(campaign.id, "r.start_at, r.conversations_per_day")).toEqual({
+      start_at: inTwoDays,
+      conversations_per_day: 48,
+    });
+    expect(await status()).toBe("scheduled");
+
+    // Should a pending change lose its start some other way, it is not applied.
+    const again = await rpc<string>(workspace.owner.client, "begin_campaign_edit", {
+      p_campaign_id: campaign.id,
+    });
+    await sql("update public.campaign_revisions set start_at = null, end_at = null where id = $1", [
+      again,
+    ]);
+    const broken = await launchCheck(workspace.owner.client, campaign.id);
+    expect(broken.problems.map((problem) => [problem.code, problem.field])).toContainEqual([
+      "required",
+      "start_at",
     ]);
     await expectDbError(
       rpc(workspace.owner.client, "apply_campaign_changes", {
         p_campaign_id: campaign.id,
-        p_expected_revision_id: check.revision_id,
+        p_expected_revision_id: broken.revision_id,
       }),
       "campaign_invalid",
     );
-    // Nothing started early.
-    expect(await activeRevision(campaign.id, "r.start_at")).toEqual({ start_at: inTwoDays });
-    const [still] = await sql<{ status: string }>(
-      "select status from public.campaigns where id = $1",
-      [campaign.id],
-    );
-    expect(still!.status).toBe("scheduled");
+    expect(await status()).toBe("scheduled");
+  });
+
+  it("applies an edit sent without a start to a campaign that started at its launch", async () => {
+    const workspace = await createWorkspace();
+    const connection = await createConnection(workspace, fake);
+    const campaign = await createCampaign(workspace, connection, {
+      ...PLAIN_PROMPTS,
+      config: { ...LEFT_OPEN, ...THREE_ANSWERS, timezone: "America/New_York" },
+    });
+    await launch(workspace, campaign);
+    const launched = await activeRevision(campaign.id, "r.start_at, r.end_at");
+    // The form as it was before the launch: no start, a length, and one changed setting.
+    await rpc(workspace.owner.client, "save_campaign_draft", {
+      p_campaign_id: campaign.id,
+      p_patch: {
+        config: { start_at: null, end_at: null, duration_days: 3, conversations_per_day: 48 },
+      },
+    });
+    const check = await launchCheck(workspace.owner.client, campaign.id);
+    expect(check.problems).toEqual([]);
+    await rpc(workspace.owner.client, "apply_campaign_changes", {
+      p_campaign_id: campaign.id,
+      p_expected_revision_id: check.revision_id,
+    });
+    expect(
+      await activeRevision(
+        campaign.id,
+        "r.revision_number, r.start_at, r.end_at, r.conversations_per_day",
+      ),
+    ).toEqual({
+      revision_number: 2,
+      start_at: launched.start_at,
+      end_at: launched.end_at,
+      conversations_per_day: 48,
+    });
   });
 
   it("plans a draft with an open start as a launch at this moment", async () => {

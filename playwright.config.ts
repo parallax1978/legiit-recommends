@@ -22,6 +22,9 @@ export default defineConfig({
   outputDir: "test-results",
   use: {
     baseURL,
+    // Not the timezone of the server or the database (UTC here and in CI): a campaign takes
+    // its timezone from the browser, and a test in UTC could not tell the two apart.
+    timezoneId: "Pacific/Auckland",
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",

@@ -21,16 +21,14 @@ export function SuggestTimezone({ campaignId }: { campaignId: string }) {
 
   useEffect(() => {
     if (!zone) return;
-    let current = true;
+    // Whichever run of this effect stored the timezone, the page has to be read again: in
+    // development effects run twice, and the second call finds it already set.
     suggestCampaignTimezone(campaignId, zone)
       .then((stored) => {
-        if (stored && current) router.refresh();
+        if (stored) router.refresh();
       })
       // Nothing is lost when this fails: the page keeps asking for a timezone, as before.
       .catch(() => undefined);
-    return () => {
-      current = false;
-    };
   }, [campaignId, zone, router]);
 
   return null;

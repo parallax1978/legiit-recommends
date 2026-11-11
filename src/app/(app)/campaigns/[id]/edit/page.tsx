@@ -62,7 +62,7 @@ async function EditCampaign({
           <CampaignStatusBadge status={campaign.status} archived={Boolean(campaign.archived_at)} />
         </span>
       }
-      description="Fields start empty: enter the values for this campaign. Save as often as you like; nothing is sent to the provider until you launch."
+      description="Enter the business, your prompts and a model, then how long to run, how many conversations a day and a total budget. Everything else starts with a standard value you can change. Save as often as you like; nothing is sent to the provider until you launch."
     />
   );
 
@@ -239,7 +239,15 @@ async function EditCampaign({
   return (
     <>
       {header}
+      {/*
+        The form keeps what was typed while the person visits other pages (the router hides
+        this page rather than discarding it). When the campaign itself has changed in the
+        meantime, by being launched or by its pending changes being created, applied or
+        discarded, that kept form describes something that no longer exists: the key makes
+        the editor start again from what is stored.
+      */}
       <CampaignEditor
+        key={`${campaign.launched_at ?? "draft"}:${campaign.draft_revision_id ?? "none"}`}
         data={{
           workspaceId,
           campaign: {

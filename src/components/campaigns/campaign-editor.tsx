@@ -29,7 +29,9 @@ import {
   type CampaignDraftInput,
   type DraftSaved,
 } from "@/lib/actions/campaigns";
+import { saveProbeSet } from "@/lib/actions/library";
 import { fillBlanks, standardOutputCap } from "@/lib/campaign-defaults";
+import { questionsForChecks } from "@/lib/check-questions";
 import { cn } from "@/lib/cn";
 import { WEEKDAYS, formatNumber, formatUsd } from "@/lib/format";
 import { templateKind } from "@/lib/labels";
@@ -255,6 +257,9 @@ export function CampaignEditor({ data }: { data: EditorData }) {
   // A new draft is not shown as a page full of errors: inline problems appear after the first save.
   const [showInline, setShowInline] = useState(data.showProblems);
   const [created, setCreated] = useState<LibraryTemplate[]>([]);
+  // Question sets made from this form, shown at once without waiting for the page to reload.
+  const [createdSets, setCreatedSets] = useState<EditorData["probeSets"]>([]);
+  const [creatingSet, startSetCreation] = useTransition();
   const [ordinal, setOrdinal] = useState(0);
   const [pending, startTransition] = useTransition();
   const browserZone = useSyncExternalStore(
@@ -398,10 +403,54 @@ export function CampaignEditor({ data }: { data: EditorData }) {
       }
     });
 
+  const probeSets = useMemo(() => {
+    const known = new Set(data.probeSets.map((item) => item.id));
+    return [...data.probeSets, ...createdSets.filter((item) => !known.has(item.id))];
+  }, [data.probeSets, createdSets]);
+  // The campaign's own question, usable as a fresh check unless it names the business.
+  const ownQuestions = (form.steps[0]?.template_ids ?? [])
+    .map((id) => templateById.get(id)?.body ?? "")
+    .filter((body) => body.trim() !== "");
+  const checkQuestions = questionsForChecks(ownQuestions, form);
+  const createSetFromQuestions = () =>
+    startSetCreation(async () => {
+      const name = `${form.name.trim() || "Campaign"} questions`.slice(0, 120);
+      let result: Awaited<ReturnType<typeof saveProbeSet>>;
+      try {
+        result = await saveProbeSet({
+          workspaceId: data.workspaceId,
+          probeSetId: null,
+          name,
+          description: "Made from the campaign's own question.",
+          questions: checkQuestions.map((body) => ({ body, is_held_out: false })),
+        });
+      } catch (error) {
+        result = actionFailure(error, "The question set could not be created. Try again.");
+      }
+      if (!result.ok) {
+        toastFailure(result);
+        return;
+      }
+      const id = result.data?.probe_set_id;
+      if (!id) {
+        toast.error("The question set could not be created. Try again.");
+        return;
+      }
+      setCreatedSets((current) => [
+        ...current,
+        { id, name, questions: checkQuestions.length, heldOut: 0, archived: false },
+      ]);
+      set("probe_set_id", id);
+      toast.success("Question set created and chosen. Now enter how many checks to run.");
+    });
+
   const preview = saved.preview;
   const openProblems: Problem[] = saved.check.problems.filter((problem) => !awaitsSave(problem));
   const launched = data.campaign.launched;
   // The settings with standard values are folded away, unless one of them needs attention.
+  // Once a problem has opened them they stay open: the list of problems empties with the
+  // first keystroke, and closing the panel then would take the field away mid-typing.
+  const [scheduleDetailsOpened, setScheduleDetailsOpened] = useState(false);
   const scheduleDetailsNeeded =
     problemsFor(
       "timezone",
@@ -415,6 +464,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
       "missed_slot_behavior",
       "catch_up",
     ).length > 0;
+  if (scheduleDetailsNeeded && !scheduleDetailsOpened) setScheduleDetailsOpened(true);
 
   return (
     <div className="grid grid-cols-1 items-start gap-6 pb-20 xl:grid-cols-[minmax(0,1fr)_20rem] xl:pb-0">
@@ -934,7 +984,11 @@ export function CampaignEditor({ data }: { data: EditorData }) {
                 label="End"
                 htmlFor="c-end"
                 error={error("end_at")}
-                hint="No new conversations start after this. Final fresh checks follow."
+                hint={
+                  Number(form.final_samples) > 0
+                    ? "No new conversations start after this. Final fresh checks follow."
+                    : "No new conversations start after this."
+                }
               >
                 <Input
                   id="c-end"
@@ -967,7 +1021,10 @@ export function CampaignEditor({ data }: { data: EditorData }) {
             )}
           </div>
 
-          <Disclosure summary="More schedule settings" defaultOpen={scheduleDetailsNeeded}>
+          <Disclosure
+            summary="More schedule settings"
+            defaultOpen={scheduleDetailsNeeded || scheduleDetailsOpened}
+          >
             <p className="text-ink-muted text-xs">
               These start with standard values: every day, all day, one conversation at a time, and
               missed slots skipped. Times are entered in the campaign&apos;s timezone and stored in
@@ -1215,36 +1272,69 @@ export function CampaignEditor({ data }: { data: EditorData }) {
           <Field
             label="Question set"
             htmlFor="c-probe-set"
+            optional
             error={error("probe_set_id")}
-            hint={
-              <>
-                Manage sets in the{" "}
+            hint="The questions that fresh checks ask. Only needed when fresh checks are on."
+          >
+            {probeSets.length === 0 ? (
+              <p
+                id="c-probe-set"
+                className="border-line-strong text-ink-muted max-w-md rounded-xl border border-dashed px-3 py-3 text-[13px]"
+              >
+                You have no question sets yet, so there is nothing to choose.
+              </p>
+            ) : (
+              <Select
+                id="c-probe-set"
+                value={form.probe_set_id}
+                onChange={(event) => set("probe_set_id", event.target.value)}
+                className="max-w-md"
+              >
+                <option value="">Choose…</option>
+                {probeSets.map((set_) => (
+                  <option key={set_.id} value={set_.id}>
+                    {set_.name} — {set_.questions} question{set_.questions === 1 ? "" : "s"},{" "}
+                    {set_.heldOut} held out{set_.archived ? " (archived)" : ""}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          {form.probe_set_id === "" ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={creatingSet || checkQuestions.length === 0}
+                  aria-busy={creatingSet}
+                  onClick={createSetFromQuestions}
+                >
+                  {creatingSet ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="size-4" aria-hidden="true" />
+                  )}
+                  Make a set from this campaign&apos;s question
+                  {checkQuestions.length > 1 ? "s" : ""}
+                </Button>
                 <Link
                   href="/library?tab=question-sets"
                   target="_blank"
-                  className="text-brand hover:text-brand-strong font-medium"
+                  className="text-brand hover:text-brand-strong text-[13px] font-medium"
                 >
-                  Prompt Library
+                  Write a set in the Prompt Library
                 </Link>
-                .
-              </>
-            }
-          >
-            <Select
-              id="c-probe-set"
-              value={form.probe_set_id}
-              onChange={(event) => set("probe_set_id", event.target.value)}
-              className="max-w-md"
-            >
-              <option value="">Choose…</option>
-              {data.probeSets.map((set_) => (
-                <option key={set_.id} value={set_.id}>
-                  {set_.name} — {set_.questions} question{set_.questions === 1 ? "" : "s"},{" "}
-                  {set_.heldOut} held out{set_.archived ? " (archived)" : ""}
-                </option>
-              ))}
-            </Select>
-          </Field>
+              </div>
+              <p className="text-ink-muted text-xs">
+                {checkQuestions.length > 0
+                  ? `Uses the ${checkQuestions.length === 1 ? "wording" : `${checkQuestions.length} wordings`} of step 1 and chooses the new set for this campaign.`
+                  : ownQuestions.length === 0
+                    ? "Add a question to step 1 first, or write a set in the Prompt Library."
+                    : "Your question names the business, and a fresh check must not: write a set in the Prompt Library instead."}
+              </p>
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field
               label="Baseline checks"
@@ -1288,6 +1378,10 @@ export function CampaignEditor({ data }: { data: EditorData }) {
               />
             </Field>
           </div>
+          <p className="text-ink-muted text-xs">
+            For example 10, 2 and 10: ten checks before the campaign, two on each active day, and
+            ten after it. Each check is one request.
+          </p>
           <ProblemList problems={problemsFor("checks")} />
           <label className="text-ink flex items-start gap-2.5 text-[13px]">
             <Checkbox
@@ -1530,7 +1624,7 @@ export function EstimatePanel({ preview }: { preview: PlanPreview }) {
               value={formatNumber(preview.planned_conversations)}
               strong
             />
-            <Row label="Active days" value={formatNumber(preview.active_days)} />
+            <Row label="Calendar days with work" value={formatNumber(preview.active_days)} />
             <Row
               label="Fresh checks"
               value={`${formatNumber(preview.baseline_checks)} + ${formatNumber(preview.scheduled_checks)} + ${formatNumber(preview.final_checks)}`}

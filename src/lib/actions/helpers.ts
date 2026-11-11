@@ -3,6 +3,7 @@ import { refresh } from "next/cache";
 import { invokeOps, type OpsResponse } from "@/lib/ops";
 import { fail, fromDbError, type ActionResult } from "@/lib/result";
 import { getIdentity } from "@/lib/session";
+import { leaveEndedSession } from "@/lib/session-end";
 import { createClient, type ServerClient } from "@/lib/supabase/server";
 
 interface DbResult<T> {
@@ -41,6 +42,10 @@ export async function operate<T = Record<string, unknown>>(
 ): Promise<ActionResult<T>> {
   if (!(await getIdentity())) return NOT_SIGNED_IN;
   const result: OpsResponse<T> = await invokeOps<T>(action, input);
+  // The function checks the session with the Auth server on every call. A token that still
+  // reads as valid here can belong to a session that was ended elsewhere: there is nothing to
+  // retry, the person has to sign in again.
+  if (!result.ok && result.code === "unauthorized") await leaveEndedSession();
   if (!result.ok) return fail(result.message, result.code);
   refresh();
   const message = typeof options.success === "function" ? options.success(result) : options.success;

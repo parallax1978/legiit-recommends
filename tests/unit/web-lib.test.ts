@@ -24,6 +24,7 @@ import {
   toStandardFormValues,
 } from "@/lib/campaign-defaults";
 import { resolveSchedule } from "@/lib/campaign-schedule";
+import { namesTheBusiness, questionsForChecks } from "@/lib/check-questions";
 import { first, likePattern, pageNumber, uuidParam } from "@/lib/params";
 import { signInFailure } from "@/lib/sign-in-failure";
 import { sessionCookieOptions } from "@/lib/supabase/env";
@@ -622,5 +623,43 @@ describe("standard campaign values in the form", () => {
     });
     // The form that was passed in is left as it was.
     expect(form.max_concurrency).toBe("");
+  });
+});
+
+describe("a campaign's own questions as fresh checks", () => {
+  const target = {
+    business_name: "Harborview Bakehouse",
+    website_url: "https://www.harborviewbakehouse.example/menu",
+  };
+
+  it("keeps each question once, in order, and drops the ones that name the business", () => {
+    expect(
+      questionsForChecks(
+        [
+          "What are the best bakeries for sourdough?",
+          "  what are the best   bakeries for sourdough? ",
+          "Is {{business_name}} any good?",
+          "Is harborview bakehouse worth the trip?",
+          "What do people say about harborviewbakehouse.example?",
+          "Have a look at {{ website_url }} and tell me what you think.",
+          "Which {{category}} would you pick in {{location}}?",
+          "   ",
+        ],
+        target,
+      ),
+    ).toEqual([
+      "What are the best bakeries for sourdough?",
+      "Which {{category}} would you pick in {{location}}?",
+    ]);
+  });
+
+  it("does not take a business that has not been entered yet for a match", () => {
+    const blank = { business_name: "  ", website_url: "" };
+    expect(namesTheBusiness("What are the best bakeries?", blank)).toBe(false);
+    expect(questionsForChecks(["What are the best bakeries?"], blank)).toEqual([
+      "What are the best bakeries?",
+    ]);
+    // The placeholders name it whatever it turns out to be.
+    expect(namesTheBusiness("Is {{business_name}} any good?", blank)).toBe(true);
   });
 });

@@ -116,7 +116,26 @@ test("the conversations list filters by classification in the database", async (
   }
 });
 
-test("signing out loads the sign-in page afresh and the session is gone", async () => {
+const ownerSessions = async () =>
+  Number(
+    (
+      await sql<{ n: string }>(
+        "select count(*)::text as n from auth.sessions s join auth.users u on u.id = s.user_id where u.email = $1",
+        [OWNER.email],
+      )
+    )[0]!.n,
+  );
+
+test("signing out loads the sign-in page afresh, and ends that session only", async ({
+  browser,
+}) => {
+  // The same person signed in somewhere else: another browser, or a colleague on the account.
+  const elsewhere = await browser.newPage();
+  await signIn(elsewhere, OWNER);
+  await expect(elsewhere).toHaveURL(/\/overview/);
+  const before = await ownerSessions();
+  expect(before).toBeGreaterThanOrEqual(2);
+
   await page.goto("/settings?tab=profile");
   await expect(page.getByRole("heading", { name: "Password" })).toBeVisible();
   await page.evaluate(() => {
@@ -137,4 +156,47 @@ test("signing out loads the sign-in page afresh and the session is gone", async 
   // The app is closed again.
   await page.goto("/overview");
   await expect(page).toHaveURL(/\/sign-in\?next=%2Foverview$/);
+
+  // Exactly one session ended. The other browser is still signed in for the Auth server too,
+  // which the backend function asks on every call: a request through it still goes through.
+  expect(await ownerSessions()).toBe(before - 1);
+  await elsewhere.goto("/settings?tab=connections");
+  await elsewhere.getByRole("button", { name: "Test connection" }).first().click();
+  await expect(elsewhere.getByText(/Connection works\./)).toBeVisible({ timeout: 60_000 });
+  await elsewhere.close();
+});
+
+test("a session that was ended elsewhere leads to the sign-in page, which says why", async ({
+  browser,
+}) => {
+  const visitor = await browser.newPage();
+  await signIn(visitor, OWNER);
+  await expect(visitor).toHaveURL(/\/overview/);
+  await visitor.goto("/settings?tab=connections");
+  await expect(visitor.getByRole("button", { name: "Test connection" }).first()).toBeVisible();
+
+  // What signing out everywhere, or an administrator revoking the session, does: the session
+  // is gone for the Auth server while this browser still holds a token that reads as valid.
+  await sql(
+    "delete from auth.sessions where user_id = (select id from auth.users where email = $1)",
+    [OWNER.email],
+  );
+  // Pages still load.
+  await visitor.reload();
+  await expect(visitor.getByRole("button", { name: "Test connection" }).first()).toBeVisible();
+
+  // The first request that asks the Auth server ends it here too, with an explanation instead
+  // of a refusal the person can do nothing with.
+  await visitor.getByRole("button", { name: "Test connection" }).first().click();
+  await expect(visitor).toHaveURL(/\/sign-in\?ended=1$/, { timeout: 60_000 });
+  await expect(visitor.getByText("Your session has ended.")).toBeVisible();
+  const cookies = await visitor.context().cookies();
+  expect(cookies.filter((cookie) => /-auth-token/.test(cookie.name))).toEqual([]);
+
+  // Signing in again is all it takes.
+  await visitor.getByLabel("Email").fill(OWNER.email);
+  await visitor.getByLabel("Password").fill(OWNER.password);
+  await visitor.getByRole("button", { name: "Sign in" }).click();
+  await expect(visitor).toHaveURL(/\/overview/);
+  await visitor.close();
 });

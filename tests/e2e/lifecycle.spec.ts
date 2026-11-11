@@ -300,6 +300,19 @@ test("a new campaign launches on three answers: how long, how many a day, and a 
   await page.locator("#c-model").selectOption("fake-chat-1");
   await expect(page.locator("#model-max-output")).toHaveValue("2000");
 
+  // Fresh checks stay off, but their question set is one click away: it is made from the
+  // campaign's own question and chosen, without leaving the form.
+  await page.getByRole("button", { name: "Make a set from this campaign's question" }).click();
+  await expect(page.getByText("Question set created and chosen.")).toBeVisible();
+  const [made] = await sql<{ id: string; questions: string }>(
+    `select s.id, (select string_agg(q.body, '|' order by q.position) from public.probe_questions q
+                    where q.probe_set_version_id = s.current_version_id) as questions
+     from public.probe_sets s where s.name = $1`,
+    [`${name} questions`],
+  );
+  expect(made!.questions).toBe("What are the best bakeries for sourdough?");
+  await expect(page.locator("#c-probe-set")).toHaveValue(made!.id);
+
   // The three answers. Nothing else is touched: no start, timezone, days, hours, concurrency,
   // missed-slot rule, fresh checks, daily budget, category or language.
   await page.locator("#c-duration").fill("2");
@@ -344,9 +357,13 @@ test("a new campaign launches on three answers: how long, how many a day, and a 
 
   // A later edit can be applied: the start the campaign took at its launch is sent back by the
   // form to the minute, and that must not count as moving a start that has passed.
-  await page.goto(`${path}/edit`);
+  // Through the Edit link, as a person would: the router shows the editor again with the form
+  // it held before the launch, and that form has to start over from what is stored now.
+  await page.getByRole("link", { name: "Edit", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`${path}/edit$`));
   await expect(page.getByText("This campaign has been launched")).toBeVisible();
   await expect(page.locator("#c-start")).toBeDisabled();
+  await expect(page.locator("#c-start")).not.toHaveValue("");
   await expect(page.locator("#c-duration")).toHaveValue("2");
   await page.locator("#c-per-day").fill("2");
   await page.getByRole("button", { name: "Save and review changes" }).click();
