@@ -101,10 +101,11 @@ export async function requestPasswordReset(
   }
   // The reply cannot promise delivery, because it has to read the same when the send was
   // refused: Supabase's built-in email service delivers only to the project's Supabase team
-  // and twice an hour, and every sender has an hourly limit. Say what to do when nothing
-  // arrives.
+  // and a couple of times an hour, and by default one address may ask only once a minute
+  // whatever the sender. It names no remedy either: the one-time link the operator can
+  // create is for workspace owners (README, Recovery), and this reply is shown to everyone.
   return ok(
-    "If an account exists for that address, a reset link has been requested. It can take a few minutes and may land in spam. The number of emails per hour is limited, so asking again straight away will not help. If nothing arrives, whoever operates this installation can give you a one-time sign-in link.",
+    "If an account exists for that address, a reset link has been requested. It can take a few minutes and may land in spam. Emails are limited per address and per hour, so wait a few minutes before asking again. If nothing arrives, ask whoever operates this installation for help.",
   );
 }
 

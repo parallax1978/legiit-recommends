@@ -249,33 +249,53 @@ deployment; the next `deploy:supabase` sets them back.
 #### Email
 
 Supabase Auth sends the invitation and password-reset emails. Every hosted project starts on
-Supabase's **built-in email service**. It needs no setup and it does send, within limits that
-Supabase sets on purpose (it is there for trying Auth out, not for production use):
+Supabase's **built-in email service**. It needs no setup and it does send, but Supabase limits
+it on purpose and promises no delivery (it is there for trying Auth out, not for production
+use):
 
 - It delivers **only to the people on the project's Supabase team**: the members of its
-  Supabase organization, at the address of their Supabase account. For a project created
-  through Vercel's Supabase integration, those accounts belong to the people in the Vercel
-  team (normally under their Vercel email address). Any other address is refused
+  Supabase organization, at the address of their Supabase account. The organization's **Team**
+  tab in the Supabase dashboard shows who they are. For a project created through Vercel's
+  Supabase integration, people in the Vercel team get there by using Supabase through Vercel
+  (whoever created the project has). Any other address is refused
   (`email_address_not_authorized`): an invitation to it fails with "… cannot be used as it is
   not authorized", and a reset email for it is not sent.
-- It sends **2 emails an hour** for the whole project.
-- According to Supabase's announcement of 3 June 2026, a **Free-plan project created after
-  that date** sends Supabase's standard emails through this service instead of the templates
-  above. This app completes only its own links (`/auth/confirm?token_hash=…`), so on such a
-  project the emails arrive but their links let nobody in until the project is on a paid plan
-  or has its own sender.
+- It currently sends **2 emails an hour** for the whole project. Supabase may change that
+  number without notice.
+- **A Free-plan project created on or after 3 June 2026** may not use its own email templates
+  with this service (Supabase's announcement of that date). It sends Supabase's standard
+  emails, whose links go to Supabase's own address. This app completes only its own links
+  (`/auth/confirm?token_hash=…`), so those emails let nobody in. Give such a project its own
+  sender (below) or put its organization on a paid plan before you rely on any email, then
+  run `npm run deploy:supabase` so that the templates are applied. This repository has not
+  been deployed to such a project: step 1 of the deploy writes the templates in the same
+  request as the other Auth settings and stops if the project does not accept them.
 
-So an owner whose address is on the Supabase team has working password-reset emails from the
-first deployment, with nothing to configure. Inviting anyone outside that team, or sending more
-than a couple of emails an hour, needs **the project's own sender**, entered under
-**Authentication → Emails → SMTP Settings**: the host, port, user name and password of an SMTP
-service, a From address that service lets you send from, and a sender name. Supabase then
-delivers to every address, 30 emails an hour to begin with (raise it under **Authentication →
-Rate Limits**). The deploy leaves these settings alone. Two usual sources of an SMTP login: a
-transactional email service (Resend, for one, can be added from the Vercel Marketplace and
-needs a domain of your own there; a `*.vercel.app` address cannot send mail), or a mailbox you
-already have that offers SMTP. A provider with an HTTP API only can be connected through
-Supabase's **Send Email hook** instead.
+So, except on a project of the last kind, an owner whose address is on the Supabase team has
+working password-reset emails from the first deployment, with nothing to configure.
+
+Inviting someone outside that team who has no account yet, or sending more than a couple of
+emails an hour, needs **the project's own sender**, entered under **Authentication → Emails →
+SMTP Settings**: the host, port, user name and password of an SMTP service, a From address that
+service lets you send from, and a sender name. Supabase then delivers to every address, by its
+documentation 30 emails an hour to begin with (raise it under **Authentication → Rate
+Limits**). The deploy leaves these settings alone.
+
+- The SMTP login usually comes from a transactional email service (Resend, Postmark, SendGrid,
+  Amazon SES and the like). They normally ask you to prove that you own the domain you send
+  from by adding DNS records, so a `*.vercel.app` address will not do. Switch off click
+  tracking there: it rewrites the links in the emails.
+- A mailbox you already have that offers SMTP works too. For Gmail and similar hosts
+  Supabase's dashboard warns that they are meant for personal mail and that delivery may
+  suffer.
+- Do not add people to the Supabase organization just to make their address deliverable. That
+  gives them access to the Supabase project itself, not only to this app.
+- Supabase's **Send Email hook** also delivers to every address, but it is not a setting: it
+  replaces the email templates with a function you would have to write, which has to build
+  this app's links itself. This repository does not include one.
+- If the sender is switched off again, Supabase's dashboard may reset the email templates.
+  `npm run auth:configure -- --check` shows whether they still match this repository, and
+  `npm run deploy:supabase` writes them again.
 
 Nobody needs email to get in as an owner: the next step prints a one-time link.
 
@@ -291,15 +311,17 @@ project it is acting on.)
 
 This grants that address the right to create one workspace and prints a one-time link. Open it
 in a browser to choose a password, then name the workspace. Nothing is emailed. Without
-`--link` the command sends a Supabase invitation email instead (it arrives only if the
-project's email sender may deliver to that address, see [Email](#email)); with `OWNER_PASSWORD`
-set in the environment it creates the account with that password, which is how local
-development and the tests do it.
+`--link` the command sends a Supabase invitation email instead, unless the address already has
+a confirmed account, which gets no email and keeps its password. If the project's email sender
+refuses the address, the command stops and says why (see [Email](#email)). With
+`OWNER_PASSWORD` set in the environment it creates the account with that password, which is
+how local development and the tests do it.
 
 This is for owners only: every address it is run for may create its own workspace. Other people
-join an existing workspace through an invitation from **Settings → Members**. That invitation
-is an email, so with the built-in email service it reaches only people on the project's
-Supabase team ([Email](#email)).
+join an existing workspace through an invitation from **Settings → Members**. Someone who
+already has a confirmed account here is added at once. Anyone else is sent an email, which
+with the built-in email service reaches only people on the project's Supabase team
+([Email](#email)).
 
 The same command with `--link` is the way back in for an owner who is locked out: for an
 account that already has a password, the link resets it. An account that already existed for
@@ -471,23 +493,24 @@ project, so do not count on one for recovery. A new project always starts with
 
 ## Recovery
 
-| Situation                           | What to do                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Stop all spending now               | **Settings → Workspace → Emergency stop** (owner). Requests already sent finish and are recorded. Release it to resume.                                                                                                                                                                                                                                                                                                        |
-| A campaign was paused automatically | The provider rejected its model or settings. Open the campaign for the reason, fix it under **Edit**, apply the change, then **Resume**.                                                                                                                                                                                                                                                                                       |
-| Connection "needs attention"        | Invalid key or exhausted quota. Fix it at OpenAI or replace the key, then **Test connection**: a successful test releases the held work.                                                                                                                                                                                                                                                                                       |
-| Jobs in the review queue            | **Settings → Operational status → Review queue → Retry**. A retry continues from the last saved turn; completed turns are never sent again.                                                                                                                                                                                                                                                                                    |
-| Conversation "expired"              | The provider no longer has the stored response the next turn needs. It is not replayed silently: use **Restart as a new conversation** on its page.                                                                                                                                                                                                                                                                            |
-| Request with an unknown outcome     | A timeout or dropped connection after sending. Its reservation stays held. An owner decides under **Usage**: count as spent, or release after checking the provider's usage page.                                                                                                                                                                                                                                              |
-| Worker stopped mid-request          | Nothing to do. The lease expires, the attempt is marked unknown or retried, and the job resumes from the last saved state.                                                                                                                                                                                                                                                                                                     |
-| Budget reached                      | Raise the campaign or connection limit (or wait for the next day). Waiting jobs continue; skipped slots follow the campaign's missed-slot setting.                                                                                                                                                                                                                                                                             |
-| "Queue consumers are not activated" | Hosted: run `npm run deploy:supabase` (it installs one worker secret on both sides). Local stack: `npm run queues:activate`.                                                                                                                                                                                                                                                                                                   |
-| An owner cannot sign in             | `npm run bootstrap:owner -- --email <their address> --link` (with `ENV_FILE=…` for the hosted project) prints a one-time link that lets them choose a new password. No email is needed.                                                                                                                                                                                                                                        |
-| An email link says it has expired   | Links work once and for a limited time. Send a new invitation or reset email; for an owner the email cannot reach, use the one-time link above.                                                                                                                                                                                                                                                                                |
-| An invitation "is not authorized"   | The project is on Supabase's built-in email service, which delivers only to the people on the project's Supabase team. Give the project its own sender ([Email](#email)), then invite the person again.                                                                                                                                                                                                                        |
-| A reset email does not arrive       | The page gives the same reply whether or not an email went out. The built-in email service sends 2 emails an hour and only to the project's Supabase team: wait an hour before asking again, check spam, or use the one-time link for owners above. Addresses outside the team need the project's own sender ([Email](#email)).                                                                                                |
-| A migration fails during a deploy   | Through the Management API (the default) nothing was applied: the deployment is one transaction and the command names the failing file. When the request itself failed (too large, a gateway timeout, a lost reply) it says so, blames no file and reports what the project records. With `SUPABASE_DB_PASSWORD` (`supabase db push`), files before the failing one stay applied. Fix and run `npm run deploy:supabase` again. |
-| Scheduler heartbeat is stale        | `npm run queues:activate -- --status` (with your `ENV_FILE=…` for a hosted project) says which of `lr-plan`, `lr-dispatch` and `lr-maintenance` is missing or paused. Resume a paused one under Dashboard → Integrations → Cron. `npm run deploy:supabase` puts back a schedule that was removed; it never resumes a paused one.                                                                                               |
+| Situation                           | What to do                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop all spending now               | **Settings → Workspace → Emergency stop** (owner). Requests already sent finish and are recorded. Release it to resume.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| A campaign was paused automatically | The provider rejected its model or settings. Open the campaign for the reason, fix it under **Edit**, apply the change, then **Resume**.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Connection "needs attention"        | Invalid key or exhausted quota. Fix it at OpenAI or replace the key, then **Test connection**: a successful test releases the held work.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Jobs in the review queue            | **Settings → Operational status → Review queue → Retry**. A retry continues from the last saved turn; completed turns are never sent again.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Conversation "expired"              | The provider no longer has the stored response the next turn needs. It is not replayed silently: use **Restart as a new conversation** on its page.                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Request with an unknown outcome     | A timeout or dropped connection after sending. Its reservation stays held. An owner decides under **Usage**: count as spent, or release after checking the provider's usage page.                                                                                                                                                                                                                                                                                                                                                                           |
+| Worker stopped mid-request          | Nothing to do. The lease expires, the attempt is marked unknown or retried, and the job resumes from the last saved state.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Budget reached                      | Raise the campaign or connection limit (or wait for the next day). Waiting jobs continue; skipped slots follow the campaign's missed-slot setting.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| "Queue consumers are not activated" | Hosted: run `npm run deploy:supabase` (it installs one worker secret on both sides). Local stack: `npm run queues:activate`.                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| An owner cannot sign in             | `npm run bootstrap:owner -- --email <their address> --link` (with `ENV_FILE=…` for the hosted project) prints a one-time link that lets them choose a new password. No email is needed.                                                                                                                                                                                                                                                                                                                                                                     |
+| An email link says it has expired   | Links work once and for a limited time. Send a new invitation or reset email; for an owner the email cannot reach, use the one-time link above.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| An invitation "is not authorized"   | The project is on Supabase's built-in email service, which delivers only to the people on the project's Supabase team. Give the project its own sender ([Email](#email)), then invite the person again.                                                                                                                                                                                                                                                                                                                                                     |
+| A reset email does not arrive       | The page gives the same reply whether or not an email went out. When Supabase refused the request, the web app's server log (Vercel → Logs) has a `password_reset_email_failed` line with Supabase's reason code: `email_address_not_authorized` means the built-in email service does not deliver to that address ([Email](#email)), `over_email_send_rate_limit` that a sending limit was reached (wait, then ask again). No such line: the email went out, or there is no account for the address. For an owner, the one-time link above needs no email. |
+| An email's link goes to Supabase    | A link to `….supabase.co/auth/v1/verify…` instead of this app's `/auth/confirm` comes from one of Supabase's standard emails, not from this app's templates, and lets nobody in here. `npm run auth:configure -- --check` shows whether the project's templates differ from this repository, and `npm run deploy:supabase` writes them again. [Email](#email) names the projects that may not use their own.                                                                                                                                                |
+| A migration fails during a deploy   | Through the Management API (the default) nothing was applied: the deployment is one transaction and the command names the failing file. When the request itself failed (too large, a gateway timeout, a lost reply) it says so, blames no file and reports what the project records. With `SUPABASE_DB_PASSWORD` (`supabase db push`), files before the failing one stay applied. Fix and run `npm run deploy:supabase` again.                                                                                                                              |
+| Scheduler heartbeat is stale        | `npm run queues:activate -- --status` (with your `ENV_FILE=…` for a hosted project) says which of `lr-plan`, `lr-dispatch` and `lr-maintenance` is missing or paused. Resume a paused one under Dashboard → Integrations → Cron. `npm run deploy:supabase` puts back a schedule that was removed; it never resumes a paused one.                                                                                                                                                                                                                            |
 
 Editing a launched campaign never rewrites history: changes are saved as pending, and applying
 them creates a new immutable revision used only for future work. Changing the fresh-check

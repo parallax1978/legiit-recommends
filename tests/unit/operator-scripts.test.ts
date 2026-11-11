@@ -26,6 +26,7 @@ import {
   type ScheduleStatus,
 } from "../../scripts/lib/schedules";
 import { REQUIRED_MAX_ROWS, maxRowsProblem } from "../../scripts/lib/data-api";
+import { inviteFailureHint } from "../../scripts/lib/invitation";
 import { ManagementError, retryRead } from "../../scripts/lib/management";
 import {
   OPENAI_API_BASE_URL,
@@ -472,6 +473,31 @@ describe("reads through the Management API", () => {
         }, noWait),
       ).rejects.toThrow("Unauthorized");
       expect(calls).toBe(1);
+    }
+  });
+});
+
+describe("a refused invitation email", () => {
+  it("names the built-in service's team-only rule only when Supabase says that is the reason", () => {
+    const hint = inviteFailureHint({ code: "email_address_not_authorized", status: 400 });
+    expect(hint).toContain("only to the people on the project's Supabase team");
+    expect(hint).toContain("--link");
+  });
+
+  it("says the limit was reached, not that the address is refused, for a rate limit", () => {
+    for (const error of [{ code: "over_email_send_rate_limit", status: 429 }, { status: 429 }]) {
+      const hint = inviteFailureHint(error);
+      expect(hint).toContain("as many emails as it may for now");
+      expect(hint).not.toContain("Supabase team");
+      expect(hint).toContain("--link");
+    }
+  });
+
+  it("gives no cause for a failure it cannot identify, only the way around it", () => {
+    for (const error of [{ code: "unexpected_failure", status: 500 }, {}, { code: null }]) {
+      const hint = inviteFailureHint(error);
+      expect(hint).not.toMatch(/built-in|Supabase team|as many emails/);
+      expect(hint).toContain("--link");
     }
   });
 });

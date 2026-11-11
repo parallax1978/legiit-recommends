@@ -6,7 +6,9 @@
  * What it does:
  *   1. Grants the email address the right to create one workspace.
  *   2. Makes sure an account exists for it, in one of three ways:
- *        - default: sends a Supabase invitation email; the owner sets a password from the link;
+ *        - default: sends a Supabase invitation email; the owner sets a password from the link.
+ *          Supabase's built-in email service delivers it only to people on the project's
+ *          Supabase team (README, Email);
  *        - --link: prints a one-time link instead of sending anything, so no email delivery is
  *          needed. For an account that already has a password the link resets it, which also
  *          makes this the way back in for an owner who is locked out;
@@ -35,6 +37,7 @@ import {
   parseArgs,
   supabaseUrl,
 } from "./lib/env";
+import { inviteFailureHint } from "./lib/invitation";
 
 type Account = { id: string; confirmed: boolean } | null;
 
@@ -150,8 +153,7 @@ async function main() {
     if (invited.error) {
       fail(
         `Could not send the invitation email: ${invited.error.message}\n` +
-          "Supabase's built-in email sender only delivers to members of the project's organization. " +
-          "Configure SMTP for the project, or run the command again with --link to get a one-time link instead.",
+          inviteFailureHint(invited.error),
       );
     }
     accountNote = `Invitation email sent to ${email}. The owner sets a password from the link in it.`;
