@@ -262,16 +262,15 @@ describe("configuration revisions", () => {
       problems: { code: string; field: string; message: string }[];
     }>(workspace.owner.client, "campaign_launch_check", { p_campaign_id: id });
     const fields = new Set(empty.problems.map((p) => p.field));
+    // What only the owner can supply. Settings with a standard value, the optional ones and the
+    // start (see launch-defaults.test.ts) are not on this list.
     for (const field of [
       "business_name",
       "website_url",
-      "category",
       "connection_id",
       "model",
-      "start_at",
       "end_at",
       "timezone",
-      "daily_budget_usd",
       "total_budget_usd",
       "steps.1",
       "steps.2",
@@ -287,12 +286,18 @@ describe("configuration revisions", () => {
       }),
       "campaign_invalid",
     );
-    // A brand-new campaign has no prefilled schedule, volume, budget or business.
+    // A brand-new campaign has no prefilled schedule, volume, budget or business, and no
+    // fresh checks are scheduled for it.
     const [draft] = await sql<Record<string, unknown>>(
-      "select business_name, website_url, category, start_at, end_at, conversations_per_day, total_conversation_limit, daily_budget_usd, total_budget_usd, baseline_samples, daily_checks, final_samples, timezone, model from public.campaign_revisions where id = $1",
+      "select business_name, website_url, category, start_at, end_at, duration_days, conversations_per_day, total_conversation_limit, daily_budget_usd, total_budget_usd, probe_set_id, timezone, model from public.campaign_revisions where id = $1",
       [empty.revision_id],
     );
     expect(Object.values(draft!).every((value) => value === null)).toBe(true);
+    const [checks] = await sql<Record<string, unknown>>(
+      "select baseline_samples, daily_checks, final_samples from public.campaign_revisions where id = $1",
+      [empty.revision_id],
+    );
+    expect(checks).toEqual({ baseline_samples: 0, daily_checks: 0, final_samples: 0 });
 
     const expectProblem = async (config: Record<string, unknown>, code: string, options = {}) => {
       const campaign = await createCampaign(workspace, connection, {

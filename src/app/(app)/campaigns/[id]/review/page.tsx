@@ -9,6 +9,7 @@ import {
 import { EstimatePanel } from "@/components/campaigns/campaign-editor";
 import { ConfigSummary } from "@/components/campaigns/config-summary";
 import { ApplyChangesButton, LaunchButton } from "@/components/campaigns/launch-buttons";
+import { SuggestTimezone } from "@/components/campaigns/suggest-timezone";
 import { CampaignStatusBadge } from "@/components/status";
 import { ButtonLink } from "@/components/ui/button";
 import { Callout, Card, CardBody, CardHeader, PageHeader } from "@/components/ui/card";
@@ -168,6 +169,9 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
 
   return (
     <>
+      {isDraft && isAdmin && !revision.timezone ? (
+        <SuggestTimezone campaignId={campaign.id} />
+      ) : null}
       <PageHeader
         eyebrow={
           <span className="flex flex-wrap items-center gap-1.5">
@@ -295,17 +299,45 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
             <CardBody>
               {preview.days.length === 0 ? (
                 <p className="text-ink-muted text-[13px]">
-                  No days are planned yet. Complete the schedule in the editor.
+                  No days are planned yet. Enter how long the campaign runs and the conversations
+                  per day in the editor.
                 </p>
               ) : (
                 <>
                   <p className="text-ink mb-3 text-[13px]">
-                    {formatDateTime(preview.start_at, preview.timezone)} to{" "}
-                    {formatDateTime(preview.end_at, preview.timezone)} ·{" "}
+                    {preview.starts_at_launch ? (
+                      <>
+                        Starts when you launch
+                        {preview.schedule_end_mode === "duration" && preview.duration_days
+                          ? ` and runs for ${formatNumber(preview.duration_days)} day${preview.duration_days === 1 ? "" : "s"}`
+                          : ""}
+                        . Launched now, that is{" "}
+                        {formatDateTime(preview.planned_start_at, preview.timezone)} to{" "}
+                        {formatDateTime(preview.planned_end_at, preview.timezone)} ·{" "}
+                      </>
+                    ) : (
+                      <>
+                        {formatDateTime(preview.planned_start_at, preview.timezone)} to{" "}
+                        {formatDateTime(preview.planned_end_at, preview.timezone)} ·{" "}
+                      </>
+                    )}
                     {formatNumber(preview.planned_conversations)} conversations over{" "}
                     {formatNumber(preview.active_days)} active day
                     {preview.active_days === 1 ? "" : "s"}
                   </p>
+                  {preview.first_conversation_at ? (
+                    <p className="text-ink-muted mb-3 text-[13px]">
+                      Conversations are spaced evenly through each day&apos;s active hours, so the
+                      first one is planned for{" "}
+                      <span className="text-ink font-medium">
+                        {formatDateTime(preview.first_conversation_at, preview.timezone)}
+                      </span>
+                      {preview.baseline_checks > 0
+                        ? ", once the baseline fresh checks are done"
+                        : ""}
+                      .
+                    </p>
+                  ) : null}
                   <TableWrap
                     label="Planned work per day"
                     className="max-h-72 overflow-y-auto shadow-none"

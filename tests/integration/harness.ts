@@ -483,6 +483,8 @@ export async function createCampaign(
         execution_mode: "sync",
         start_at: startAt.toISOString(),
         end_at: endAt.toISOString(),
+        // The fixture gives an end date, not a length in days.
+        schedule_end_mode: "end_time",
         timezone: "UTC",
         active_weekdays: [1, 2, 3, 4, 5, 6, 7],
         active_start_minute: 0,

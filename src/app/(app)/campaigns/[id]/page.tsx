@@ -368,24 +368,29 @@ async function OverviewTab({
         <CardBody>
           <ol className="flex flex-col gap-4 sm:flex-row sm:gap-3">
             <Phase label="Launched" at={campaign.launched_at} zone={zone} state="done" />
-            <Phase
-              label="Baseline checks"
-              at={campaign.baseline_completed_at ?? (position >= 1 ? campaign.started_at : null)}
-              zone={zone}
-              state={campaign.baseline_completed_at ? "done" : state(1)}
-            />
+            {/* A campaign without fresh checks passes straight through these two phases. */}
+            {(revision.baseline_samples ?? 0) > 0 ? (
+              <Phase
+                label="Baseline checks"
+                at={campaign.baseline_completed_at ?? (position >= 1 ? campaign.started_at : null)}
+                zone={zone}
+                state={campaign.baseline_completed_at ? "done" : state(1)}
+              />
+            ) : null}
             <Phase
               label="Conversations"
               at={campaign.conversations_ended_at}
               zone={zone}
               state={campaign.conversations_ended_at ? "done" : state(2)}
             />
-            <Phase
-              label="Final checks"
-              at={campaign.completed_at ?? campaign.final_checks_started_at}
-              zone={zone}
-              state={state(3)}
-            />
+            {(revision.final_samples ?? 0) > 0 ? (
+              <Phase
+                label="Final checks"
+                at={campaign.completed_at ?? campaign.final_checks_started_at}
+                zone={zone}
+                state={state(3)}
+              />
+            ) : null}
             <Phase
               label={campaign.status === "canceled" ? "Canceled" : "Completed"}
               at={campaign.completed_at ?? campaign.canceled_at}
@@ -470,8 +475,10 @@ async function OverviewTab({
               <div className="mb-1.5 flex items-baseline justify-between gap-3 text-[13px]">
                 <span className="text-ink font-medium">Today{zone ? ` (${zone})` : ""}</span>
                 <span className="tabular text-ink-muted">
-                  <span className="text-ink font-semibold">{formatUsd(spentToday)}</span> of{" "}
-                  {formatUsd(revision.daily_budget_usd)}
+                  <span className="text-ink font-semibold">{formatUsd(spentToday)}</span>{" "}
+                  {revision.daily_budget_usd === null
+                    ? "· no daily limit"
+                    : `of ${formatUsd(revision.daily_budget_usd)}`}
                 </span>
               </div>
               <Meter

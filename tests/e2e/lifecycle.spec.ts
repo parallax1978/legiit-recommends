@@ -272,3 +272,119 @@ test("a signed-in person can change their password after confirming the current 
   await form(replacement, OWNER.password);
   await expect(page.getByText("Password changed.")).toBeVisible();
 });
+
+test("a new campaign launches on three answers: how long, how many a day, and a total budget", async () => {
+  const name = "Quick launch";
+  await page.goto("/campaigns");
+  await page.getByRole("link", { name: "New campaign" }).first().click();
+  await page.getByLabel("Campaign name").fill(name);
+  await page.getByRole("button", { name: "Create draft" }).click();
+  await expect(page).toHaveURL(/\/campaigns\/[0-9a-f-]+\/edit/);
+  const path = new URL(page.url()).pathname.replace(/\/edit$/, "");
+
+  await page.locator("#c-business").fill(BUSINESS.name);
+  await page.locator("#c-website").fill(BUSINESS.website);
+  // Prompts written on the spot, with no category, market or language to fill in.
+  const prompts = [
+    "What are the best bakeries for sourdough?",
+    'Please add "{{business_name}}" to that list.',
+    "Can you show me the complete revised list?",
+  ];
+  for (const [step, body] of prompts.entries()) {
+    await page.getByRole("button", { name: "Write new" }).nth(step).click();
+    await page.locator("#new-prompt-body").fill(body);
+    await page.getByRole("button", { name: "Save prompt" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  }
+  await page.locator("#c-connection").selectOption({ label: "Main project" });
+  await page.locator("#c-model").selectOption("fake-chat-1");
+  await expect(page.locator("#model-max-output")).toHaveValue("2000");
+
+  // The three answers. Nothing else is touched: no start, timezone, days, hours, concurrency,
+  // missed-slot rule, fresh checks, daily budget, category or language.
+  await page.locator("#c-duration").fill("2");
+  await page.locator("#c-per-day").fill("1");
+  await page.locator("#c-total-budget").fill("5");
+
+  await page.getByRole("button", { name: "Save and review" }).click();
+  await expect(page).toHaveURL(/\/review$/);
+  await expect(page.getByText("The configuration is complete")).toBeVisible();
+  await expect(page.getByText(/Starts when you launch and runs for 2 days/)).toBeVisible();
+  await expect(page.getByText("When you launch", { exact: true })).toBeVisible();
+  await expect(page.getByText("No separate daily limit", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Launch campaign" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Launch campaign" }).click();
+  await expect(page).toHaveURL(new RegExp(`${path}$`), { timeout: 60_000 });
+
+  const browserZone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [launched] = await sql<Record<string, unknown>>(
+    `select c.status::text as status, r.timezone, r.max_concurrency, r.missed_slot_behavior,
+            r.max_output_tokens, r.daily_budget_usd, r.category, r.language,
+            r.baseline_samples + r.daily_checks + r.final_samples as checks,
+            extract(epoch from (now() - r.start_at))::int as started_seconds_ago,
+            r.end_at = ((r.start_at at time zone r.timezone) + interval '2 days') at time zone r.timezone as two_days
+     from public.campaigns c join public.campaign_revisions r on r.id = c.active_revision_id
+     where c.name = $1`,
+    [name],
+  );
+  expect(launched).toMatchObject({
+    status: "running",
+    timezone: browserZone,
+    max_concurrency: 1,
+    missed_slot_behavior: "skip",
+    max_output_tokens: 2000,
+    daily_budget_usd: null,
+    category: null,
+    language: null,
+    checks: 0,
+    two_days: true,
+  });
+  expect(Number(launched!.started_seconds_ago)).toBeLessThan(120);
+
+  // A later edit can be applied: the start the campaign took at its launch is sent back by the
+  // form to the minute, and that must not count as moving a start that has passed.
+  await page.goto(`${path}/edit`);
+  await expect(page.getByText("This campaign has been launched")).toBeVisible();
+  await expect(page.locator("#c-start")).toBeDisabled();
+  await expect(page.locator("#c-duration")).toHaveValue("2");
+  await page.locator("#c-per-day").fill("2");
+  await page.getByRole("button", { name: "Save and review changes" }).click();
+  await expect(page).toHaveURL(/\/review$/);
+  await expect(page.getByText("The configuration is complete")).toBeVisible();
+  await page.getByRole("button", { name: "Apply changes" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Apply changes" }).click();
+  await expect(page).toHaveURL(new RegExp(`${path}$`), { timeout: 60_000 });
+  const [edited] = await sql<Record<string, unknown>>(
+    `select r.revision_number, r.conversations_per_day,
+            r.start_at = first.start_at as same_start, r.end_at = first.end_at as same_end
+     from public.campaigns c
+     join public.campaign_revisions r on r.id = c.active_revision_id
+     join public.campaign_revisions first on first.campaign_id = c.id and first.revision_number = 1
+     where c.name = $1`,
+    [name],
+  );
+  expect(edited).toEqual({
+    revision_number: 2,
+    conversations_per_day: 2,
+    same_start: true,
+    same_end: true,
+  });
+
+  // Leave nothing behind for the suites that follow: they pick up the newest campaign.
+  await page.getByRole("button", { name: "Cancel campaign" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel campaign" }).click();
+  await expect(page.getByText("Canceled", { exact: true }).first()).toBeVisible();
+  await page.goto("/campaigns");
+  await page.getByRole("button", { name: `Actions for ${name}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "Archive" }).click();
+  await expect(page.getByRole("link", { name, exact: true })).toHaveCount(0);
+  await page.goto("/campaigns?status=archived");
+  await page.getByRole("button", { name: `Actions for ${name}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete campaign" }).click();
+  await expect(page.getByText("Campaign deleted.")).toBeVisible();
+  expect(
+    await count("select count(*)::text as n from public.campaigns where name = $1", [name]),
+  ).toBe(0);
+});

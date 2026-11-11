@@ -29,6 +29,7 @@ import {
   type CampaignDraftInput,
   type DraftSaved,
 } from "@/lib/actions/campaigns";
+import { fillBlanks, standardOutputCap } from "@/lib/campaign-defaults";
 import { cn } from "@/lib/cn";
 import { WEEKDAYS, formatNumber, formatUsd } from "@/lib/format";
 import { templateKind } from "@/lib/labels";
@@ -262,6 +263,11 @@ export function CampaignEditor({ data }: { data: EditorData }) {
     () => "",
   );
   const zones = useSyncExternalStore(noop, listTimeZonesCached, () => EMPTY_ZONES);
+  // A campaign with no timezone yet shows the browser's, and saves it, until the person enters
+  // another. Once they have touched the field it is theirs, even while it is empty.
+  const [zoneTouched, setZoneTouched] = useState(false);
+  const timezone = form.timezone || (zoneTouched ? "" : browserZone);
+  const zoneFromBrowser = !form.timezone && timezone !== "";
 
   const set = <K extends keyof CampaignDraftInput>(key: K, value: CampaignDraftInput[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -303,8 +309,13 @@ export function CampaignEditor({ data }: { data: EditorData }) {
     language: form.language,
   };
 
+  // The browser's timezone is shown and goes out with the next save, so the server's request
+  // for one, made before that save, is not something the person still has to act on.
+  const awaitsSave = (problem: Problem) =>
+    zoneFromBrowser && problem.field === "timezone" && problem.code === "required";
   // Problems: what the server reported for the last saved version, unless the field was edited since.
-  const serverProblems = dirty || !showInline ? [] : saved.check.problems;
+  const serverProblems =
+    dirty || !showInline ? [] : saved.check.problems.filter((problem) => !awaitsSave(problem));
   const problemsFor = (...fields: string[]): string[] => {
     const out: string[] = [];
     for (const field of fields) if (fieldErrors[field]) out.push(fieldErrors[field]);
@@ -352,7 +363,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
     startTransition(async () => {
       let result: Awaited<ReturnType<typeof saveCampaignDraft>>;
       try {
-        result = await saveCampaignDraft(data.campaign.id, form);
+        result = await saveCampaignDraft(data.campaign.id, { ...form, timezone });
       } catch (error) {
         result = actionFailure(
           error,
@@ -367,6 +378,12 @@ export function CampaignEditor({ data }: { data: EditorData }) {
       const outcome = result.data as DraftSaved;
       setFieldErrors({});
       setSaved({ check: outcome.check, preview: outcome.preview });
+      // A setting saved blank takes its standard value: show it, without touching anything typed.
+      const stored = outcome.stored;
+      setForm((current) => {
+        const next = stored ? fillBlanks(current, stored) : current;
+        return next.timezone || !timezone ? next : { ...next, timezone };
+      });
       setDirty(false);
       setShowInline(true);
       if (then === "review") {
@@ -382,8 +399,22 @@ export function CampaignEditor({ data }: { data: EditorData }) {
     });
 
   const preview = saved.preview;
-  const openProblems: Problem[] = saved.check.problems;
+  const openProblems: Problem[] = saved.check.problems.filter((problem) => !awaitsSave(problem));
   const launched = data.campaign.launched;
+  // The settings with standard values are folded away, unless one of them needs attention.
+  const scheduleDetailsNeeded =
+    problemsFor(
+      "timezone",
+      "active_weekdays",
+      "active_hours",
+      "max_concurrency",
+      "total_conversation_limit",
+      "requests_per_minute",
+      "tokens_per_minute",
+      "jitter_seconds",
+      "missed_slot_behavior",
+      "catch_up",
+    ).length > 0;
 
   return (
     <div className="grid grid-cols-1 items-start gap-6 pb-20 xl:grid-cols-[minmax(0,1fr)_20rem] xl:pb-0">
@@ -481,7 +512,13 @@ export function CampaignEditor({ data }: { data: EditorData }) {
             </Field>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label="Category or topic" htmlFor="c-category" error={error("category")}>
+            <Field
+              label="Category or topic"
+              htmlFor="c-category"
+              optional
+              error={error("category")}
+              hint="Only fills {{category}} in your prompts."
+            >
               <Input
                 id="c-category"
                 value={form.category}
@@ -500,8 +537,9 @@ export function CampaignEditor({ data }: { data: EditorData }) {
             <Field
               label="Language"
               htmlFor="c-language"
+              optional
               error={error("language")}
-              hint="The language your prompts are written in."
+              hint="Only fills {{language}} in your prompts."
             >
               <Input
                 id="c-language"
@@ -599,7 +637,6 @@ export function CampaignEditor({ data }: { data: EditorData }) {
                 value={form.on_existing_inclusion}
                 onChange={(event) => set("on_existing_inclusion", event.target.value)}
               >
-                <option value="">Choose…</option>
                 <option value="continue">Continue with the remaining steps</option>
                 <option value="finish_early">Finish the conversation early</option>
               </Select>
@@ -767,10 +804,23 @@ export function CampaignEditor({ data }: { data: EditorData }) {
                 value={form.model}
                 disabled={!form.connection_id}
                 onChange={(event) => {
+                  const picked = connectionModels.find(
+                    (model) => model.model === event.target.value,
+                  );
+                  const verified = picked?.capabilities.max_output_tokens_verified;
                   setForm((current) => ({
                     ...current,
                     model: event.target.value,
                     model_params: {},
+                    // The cap is part of every cost reservation, so a model brings the standard
+                    // one with it. A cap that was already entered stays, unless it is more than
+                    // this model was verified for.
+                    max_output_tokens:
+                      verified !== undefined &&
+                      (current.max_output_tokens === "" ||
+                        Number(current.max_output_tokens) > verified)
+                        ? String(standardOutputCap(verified))
+                        : current.max_output_tokens,
                   }));
                   setDirty(true);
                 }}
@@ -827,52 +877,20 @@ export function CampaignEditor({ data }: { data: EditorData }) {
         <FormSection
           id="schedule"
           title="Schedule"
-          description="Times are entered in the campaign's timezone and stored in UTC. Daily quotas and active hours follow the campaign's timezone."
+          description="How long the campaign runs and how many conversations it has each day. Everything else has a standard value under More schedule settings."
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
-              label="Timezone"
-              htmlFor="c-timezone"
-              error={error("timezone")}
-              hint={
-                !form.timezone && browserZone ? (
-                  <>
-                    Your browser reports {browserZone}.{" "}
-                    <button
-                      type="button"
-                      className="text-brand hover:text-brand-strong font-medium"
-                      onClick={() => set("timezone", browserZone)}
-                    >
-                      Use it
-                    </button>
-                  </>
-                ) : (
-                  "An IANA timezone name."
-                )
-              }
-            >
-              <Input
-                id="c-timezone"
-                value={form.timezone}
-                onChange={(event) => set("timezone", event.target.value)}
-                list="c-timezones"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <datalist id="c-timezones">
-                {zones.map((zone) => (
-                  <option key={zone} value={zone} />
-                ))}
-              </datalist>
-            </Field>
-            <Field
               label="Start"
               htmlFor="c-start"
+              optional={!launched}
               error={error("start_at")}
               hint={
                 data.campaign.started
                   ? "The start cannot change after the campaign has started."
-                  : "Baseline fresh checks run first; conversations begin once they are done."
+                  : launched
+                    ? "This campaign is launched and waiting for this time."
+                    : "Leave blank to start when you launch."
               }
             >
               <Input
@@ -881,117 +899,6 @@ export function CampaignEditor({ data }: { data: EditorData }) {
                 value={form.start_local}
                 disabled={data.campaign.started}
                 onChange={(event) => set("start_local", event.target.value)}
-              />
-            </Field>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Ends" htmlFor="c-end-mode">
-              <Select
-                id="c-end-mode"
-                value={form.end_mode}
-                onChange={(event) => set("end_mode", event.target.value)}
-              >
-                <option value="end_time">At a date and time</option>
-                <option value="duration">After a number of days</option>
-              </Select>
-            </Field>
-            {form.end_mode === "duration" ? (
-              <Field
-                label="Duration in days"
-                htmlFor="c-duration"
-                error={error("end_at")}
-                hint="Counted from the start time."
-              >
-                <Input
-                  id="c-duration"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={1095}
-                  value={form.duration_days}
-                  onChange={(event) => set("duration_days", event.target.value)}
-                />
-              </Field>
-            ) : (
-              <Field
-                label="End"
-                htmlFor="c-end"
-                error={error("end_at")}
-                hint="No new conversations start after this. Final fresh checks follow."
-              >
-                <Input
-                  id="c-end"
-                  type="datetime-local"
-                  value={form.end_local}
-                  onChange={(event) => set("end_local", event.target.value)}
-                />
-              </Field>
-            )}
-          </div>
-
-          <fieldset>
-            <legend className="text-ink mb-1.5 text-[13px] font-medium">Active days</legend>
-            <div className="flex flex-wrap gap-2">
-              {WEEKDAYS.map((day) => {
-                const on = form.active_weekdays.includes(day.value);
-                return (
-                  <label
-                    key={day.value}
-                    className={cn(
-                      "flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-[13px] font-medium",
-                      on
-                        ? "border-brand bg-brand-faint text-brand-strong"
-                        : "border-line-strong bg-surface text-ink-muted",
-                    )}
-                  >
-                    <Checkbox
-                      checked={on}
-                      onChange={(event) =>
-                        set(
-                          "active_weekdays",
-                          event.target.checked
-                            ? [...form.active_weekdays, day.value].sort((a, b) => a - b)
-                            : form.active_weekdays.filter((value) => value !== day.value),
-                        )
-                      }
-                      aria-label={day.long}
-                    />
-                    {day.short}
-                  </label>
-                );
-              })}
-            </div>
-            <ProblemList problems={problemsFor("active_weekdays")} />
-          </fieldset>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Field
-              label="Active from"
-              htmlFor="c-active-start"
-              error={error("active_hours")}
-              hint="24-hour time."
-            >
-              <Input
-                id="c-active-start"
-                value={form.active_start}
-                onChange={(event) => set("active_start", event.target.value)}
-                inputMode="numeric"
-                maxLength={5}
-                placeholder="HH:MM"
-              />
-            </Field>
-            <Field
-              label="Active until"
-              htmlFor="c-active-end"
-              hint="Use 24:00 for the end of the day."
-            >
-              <Input
-                id="c-active-end"
-                value={form.active_end}
-                onChange={(event) => set("active_end", event.target.value)}
-                inputMode="numeric"
-                maxLength={5}
-                placeholder="HH:MM"
               />
             </Field>
             <Field
@@ -1010,148 +917,300 @@ export function CampaignEditor({ data }: { data: EditorData }) {
                 onChange={(event) => set("conversations_per_day", event.target.value)}
               />
             </Field>
-            <Field
-              label="Total conversation limit"
-              htmlFor="c-total-limit"
-              optional
-              error={error("total_conversation_limit")}
-            >
-              <Input
-                id="c-total-limit"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                value={form.total_conversation_limit}
-                onChange={(event) => set("total_conversation_limit", event.target.value)}
-              />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Ends" htmlFor="c-end-mode">
+              <Select
+                id="c-end-mode"
+                value={form.end_mode}
+                onChange={(event) => set("end_mode", event.target.value)}
+              >
+                <option value="duration">After a number of days</option>
+                <option value="end_time">At a date and time</option>
+              </Select>
             </Field>
+            {form.end_mode === "end_time" ? (
+              <Field
+                label="End"
+                htmlFor="c-end"
+                error={error("end_at")}
+                hint="No new conversations start after this. Final fresh checks follow."
+              >
+                <Input
+                  id="c-end"
+                  type="datetime-local"
+                  value={form.end_local}
+                  onChange={(event) => set("end_local", event.target.value)}
+                />
+              </Field>
+            ) : (
+              <Field
+                label="Duration in days"
+                htmlFor="c-duration"
+                error={error("end_at")}
+                hint={
+                  form.start_local || launched
+                    ? "Counted from the start time."
+                    : "Counted from the moment you launch."
+                }
+              >
+                <Input
+                  id="c-duration"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={1095}
+                  value={form.duration_days}
+                  onChange={(event) => set("duration_days", event.target.value)}
+                />
+              </Field>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Disclosure summary="More schedule settings" defaultOpen={scheduleDetailsNeeded}>
+            <p className="text-ink-muted text-xs">
+              These start with standard values: every day, all day, one conversation at a time, and
+              missed slots skipped. Times are entered in the campaign&apos;s timezone and stored in
+              UTC.
+            </p>
             <Field
-              label="Conversations at once"
-              htmlFor="c-concurrency"
-              error={error("max_concurrency")}
+              label="Timezone"
+              htmlFor="c-timezone"
+              error={error("timezone")}
+              className="max-w-md"
               hint={
-                connection
-                  ? `The connection allows ${connection.maxConcurrent} requests at once across all campaigns.`
-                  : undefined
+                zoneFromBrowser
+                  ? "Taken from your browser. Change it if the campaign should follow another timezone."
+                  : "An IANA timezone name. Daily quotas and active hours follow it."
               }
             >
               <Input
-                id="c-concurrency"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={64}
-                value={form.max_concurrency}
-                onChange={(event) => set("max_concurrency", event.target.value)}
+                id="c-timezone"
+                value={timezone}
+                onChange={(event) => {
+                  setZoneTouched(true);
+                  set("timezone", event.target.value);
+                }}
+                list="c-timezones"
+                autoComplete="off"
+                spellCheck={false}
               />
+              <datalist id="c-timezones">
+                {zones.map((zone) => (
+                  <option key={zone} value={zone} />
+                ))}
+              </datalist>
             </Field>
-            <Field
-              label="Requests per minute"
-              htmlFor="c-rpm"
-              optional
-              error={error("requests_per_minute")}
-            >
-              <Input
-                id="c-rpm"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                value={form.requests_per_minute}
-                onChange={(event) => set("requests_per_minute", event.target.value)}
-              />
-            </Field>
-            <Field
-              label="Tokens per minute"
-              htmlFor="c-tpm"
-              optional
-              error={error("tokens_per_minute")}
-            >
-              <Input
-                id="c-tpm"
-                type="number"
-                inputMode="numeric"
-                min={1000}
-                value={form.tokens_per_minute}
-                onChange={(event) => set("tokens_per_minute", event.target.value)}
-              />
-            </Field>
-            <Field
-              label="Random offset (seconds)"
-              htmlFor="c-jitter"
-              optional
-              error={error("jitter_seconds")}
-              hint="Each slot moves by up to this much, the same way every time it is computed."
-            >
-              <Input
-                id="c-jitter"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                max={3600}
-                value={form.jitter_seconds}
-                onChange={(event) => set("jitter_seconds", event.target.value)}
-              />
-            </Field>
-          </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field
-              label="If a slot is missed"
-              htmlFor="c-missed"
-              error={error("missed_slot_behavior")}
-              hint="For example while paused, stopped or blocked by a budget."
-            >
-              <Select
-                id="c-missed"
-                value={form.missed_slot_behavior}
-                onChange={(event) => set("missed_slot_behavior", event.target.value)}
+            <fieldset>
+              <legend className="text-ink mb-1.5 text-[13px] font-medium">Active days</legend>
+              <div className="flex flex-wrap gap-2">
+                {WEEKDAYS.map((day) => {
+                  const on = form.active_weekdays.includes(day.value);
+                  return (
+                    <label
+                      key={day.value}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-[13px] font-medium",
+                        on
+                          ? "border-brand bg-brand-faint text-brand-strong"
+                          : "border-line-strong bg-surface text-ink-muted",
+                      )}
+                    >
+                      <Checkbox
+                        checked={on}
+                        onChange={(event) =>
+                          set(
+                            "active_weekdays",
+                            event.target.checked
+                              ? [...form.active_weekdays, day.value].sort((a, b) => a - b)
+                              : form.active_weekdays.filter((value) => value !== day.value),
+                          )
+                        }
+                        aria-label={day.long}
+                      />
+                      {day.short}
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-ink-muted mt-1.5 text-xs">With none ticked, every day is used.</p>
+              <ProblemList problems={problemsFor("active_weekdays")} />
+            </fieldset>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Field
+                label="Active from"
+                htmlFor="c-active-start"
+                error={error("active_hours")}
+                hint="24-hour time. Blank means 00:00."
               >
-                <option value="">Choose…</option>
-                <option value="skip">Skip it</option>
-                <option value="catch_up">Catch up, within limits</option>
-              </Select>
-            </Field>
-            {form.missed_slot_behavior === "catch_up" ? (
-              <>
-                <Field
-                  label="Catch up within (minutes)"
-                  htmlFor="c-catch-delay"
-                  error={error("catch_up")}
-                  hint="Slots later than this are skipped."
+                <Input
+                  id="c-active-start"
+                  value={form.active_start}
+                  onChange={(event) => set("active_start", event.target.value)}
+                  inputMode="numeric"
+                  maxLength={5}
+                  placeholder="00:00"
+                />
+              </Field>
+              <Field
+                label="Active until"
+                htmlFor="c-active-end"
+                hint="Use 24:00 for the end of the day. Blank means 24:00."
+              >
+                <Input
+                  id="c-active-end"
+                  value={form.active_end}
+                  onChange={(event) => set("active_end", event.target.value)}
+                  inputMode="numeric"
+                  maxLength={5}
+                  placeholder="24:00"
+                />
+              </Field>
+              <Field
+                label="Conversations at once"
+                htmlFor="c-concurrency"
+                error={error("max_concurrency")}
+                hint={
+                  connection
+                    ? `Blank means 1. The connection allows ${connection.maxConcurrent} requests at once across all campaigns.`
+                    : "Blank means 1."
+                }
+              >
+                <Input
+                  id="c-concurrency"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={64}
+                  placeholder="1"
+                  value={form.max_concurrency}
+                  onChange={(event) => set("max_concurrency", event.target.value)}
+                />
+              </Field>
+              <Field
+                label="Total conversation limit"
+                htmlFor="c-total-limit"
+                optional
+                error={error("total_conversation_limit")}
+              >
+                <Input
+                  id="c-total-limit"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={form.total_conversation_limit}
+                  onChange={(event) => set("total_conversation_limit", event.target.value)}
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Field
+                label="Requests per minute"
+                htmlFor="c-rpm"
+                optional
+                error={error("requests_per_minute")}
+              >
+                <Input
+                  id="c-rpm"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={form.requests_per_minute}
+                  onChange={(event) => set("requests_per_minute", event.target.value)}
+                />
+              </Field>
+              <Field
+                label="Tokens per minute"
+                htmlFor="c-tpm"
+                optional
+                error={error("tokens_per_minute")}
+              >
+                <Input
+                  id="c-tpm"
+                  type="number"
+                  inputMode="numeric"
+                  min={1000}
+                  value={form.tokens_per_minute}
+                  onChange={(event) => set("tokens_per_minute", event.target.value)}
+                />
+              </Field>
+              <Field
+                label="Random offset (seconds)"
+                htmlFor="c-jitter"
+                optional
+                error={error("jitter_seconds")}
+                hint="Each slot moves by up to this much, the same way every time it is computed."
+              >
+                <Input
+                  id="c-jitter"
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={3600}
+                  value={form.jitter_seconds}
+                  onChange={(event) => set("jitter_seconds", event.target.value)}
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Field
+                label="If a slot is missed"
+                htmlFor="c-missed"
+                error={error("missed_slot_behavior")}
+                hint="For example while paused, stopped or blocked by a budget."
+              >
+                <Select
+                  id="c-missed"
+                  value={form.missed_slot_behavior}
+                  onChange={(event) => set("missed_slot_behavior", event.target.value)}
                 >
-                  <Input
-                    id="c-catch-delay"
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={1440}
-                    value={form.catch_up_max_delay_minutes}
-                    onChange={(event) => set("catch_up_max_delay_minutes", event.target.value)}
-                  />
-                </Field>
-                <Field label="Catch-up conversations per day" htmlFor="c-catch-max">
-                  <Input
-                    id="c-catch-max"
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={5000}
-                    value={form.catch_up_max_per_day}
-                    onChange={(event) => set("catch_up_max_per_day", event.target.value)}
-                  />
-                </Field>
-              </>
-            ) : null}
-          </div>
+                  <option value="skip">Skip it</option>
+                  <option value="catch_up">Catch up, within limits</option>
+                </Select>
+              </Field>
+              {form.missed_slot_behavior === "catch_up" ? (
+                <>
+                  <Field
+                    label="Catch up within (minutes)"
+                    htmlFor="c-catch-delay"
+                    error={error("catch_up")}
+                    hint="Slots later than this are skipped."
+                  >
+                    <Input
+                      id="c-catch-delay"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={1440}
+                      value={form.catch_up_max_delay_minutes}
+                      onChange={(event) => set("catch_up_max_delay_minutes", event.target.value)}
+                    />
+                  </Field>
+                  <Field label="Catch-up conversations per day" htmlFor="c-catch-max">
+                    <Input
+                      id="c-catch-max"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={5000}
+                      value={form.catch_up_max_per_day}
+                      onChange={(event) => set("catch_up_max_per_day", event.target.value)}
+                    />
+                  </Field>
+                </>
+              ) : null}
+            </div>
+          </Disclosure>
         </FormSection>
 
         <FormSection
           id="checks"
           title="Fresh checks"
-          description="Independent single questions with no conversation history, no instructions and no campaign or business details. They are sampled before the conversations begin, on a schedule while they run, and after they end."
+          description="Optional, and off while the three numbers are 0. A fresh check asks one question in a brand-new chat that says nothing about the business or this campaign, to see whether the answer names the business anyway. Checks before, during and after the campaign give a before-and-after comparison."
         >
           <Field
             label="Question set"
@@ -1190,7 +1249,7 @@ export function CampaignEditor({ data }: { data: EditorData }) {
             <Field
               label="Baseline checks"
               htmlFor="c-baseline"
-              hint="Before the first conversation. 0 turns it off."
+              hint="Before the first conversation. 0 or blank turns it off."
             >
               <Input
                 id="c-baseline"
@@ -1295,26 +1354,10 @@ export function CampaignEditor({ data }: { data: EditorData }) {
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field
-              label="Daily budget (USD)"
-              htmlFor="c-daily-budget"
-              error={error("daily_budget_usd")}
-              hint="Per day in the campaign's timezone."
-            >
-              <Input
-                id="c-daily-budget"
-                type="number"
-                inputMode="decimal"
-                min={0}
-                step="0.01"
-                value={form.daily_budget_usd}
-                onChange={(event) => set("daily_budget_usd", event.target.value)}
-              />
-            </Field>
-            <Field
               label="Total budget (USD)"
               htmlFor="c-total-budget"
               error={error("total_budget_usd")}
-              hint="The cost of the final fresh checks is set aside from this."
+              hint="The most this campaign may spend. The cost of final fresh checks is set aside from it."
             >
               <Input
                 id="c-total-budget"
@@ -1324,6 +1367,23 @@ export function CampaignEditor({ data }: { data: EditorData }) {
                 step="0.01"
                 value={form.total_budget_usd}
                 onChange={(event) => set("total_budget_usd", event.target.value)}
+              />
+            </Field>
+            <Field
+              label="Daily budget (USD)"
+              htmlFor="c-daily-budget"
+              optional
+              error={error("daily_budget_usd")}
+              hint="Per day in the campaign's timezone. Blank means no separate daily limit."
+            >
+              <Input
+                id="c-daily-budget"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={form.daily_budget_usd}
+                onChange={(event) => set("daily_budget_usd", event.target.value)}
               />
             </Field>
           </div>
@@ -1459,8 +1519,8 @@ export function EstimatePanel({ preview }: { preview: PlanPreview }) {
       <h2 className="text-ink text-[13px] font-semibold">Estimated workload</h2>
       {!scheduled ? (
         <p className="text-ink-muted mt-2 text-[13px]">
-          Set the timezone, start, end, active days, active hours and conversations per day, then
-          save, to see the plan.
+          Enter how long the campaign runs and the conversations per day, then save, to see the
+          plan.
         </p>
       ) : (
         <>
@@ -1488,7 +1548,14 @@ export function EstimatePanel({ preview }: { preview: PlanPreview }) {
             <Row label="Worst-case total" value={formatUsd(preview.max_cost_usd)} strong />
             <Row label="Total budget" value={formatUsd(preview.total_budget_usd)} />
             <Row label="Worst-case busiest day" value={formatUsd(preview.max_daily_cost_usd)} />
-            <Row label="Daily budget" value={formatUsd(preview.daily_budget_usd)} />
+            <Row
+              label="Daily budget"
+              value={
+                preview.daily_budget_usd === null
+                  ? "No daily limit"
+                  : formatUsd(preview.daily_budget_usd)
+              }
+            />
           </dl>
           <p className="text-ink-muted mt-2 text-xs">
             Fresh checks are listed as baseline + scheduled + final. Worst case assumes every

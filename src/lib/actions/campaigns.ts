@@ -1,11 +1,17 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import {
+  STANDARD_VALUE_COLUMNS,
+  toStandardFormValues,
+  type StandardFormValues,
+} from "@/lib/campaign-defaults";
+import { resolveSchedule } from "@/lib/campaign-schedule";
 import type { LaunchCheck, PlanPreview } from "@/lib/queries/types";
 import { fail, fromDbError, type ActionResult } from "@/lib/result";
 import { getIdentity } from "@/lib/session";
 import { createClient } from "@/lib/supabase/server";
-import { isValidTimeZone, zonedInputToUtc } from "@/lib/timezone";
+import { isValidTimeZone } from "@/lib/timezone";
 import { NOT_SIGNED_IN, isUuid, mutate, text } from "./helpers";
 
 const INVALID = fail("That campaign could not be found.", "not_found");
@@ -92,6 +98,8 @@ export interface DraftSaved {
   revisionId: string;
   check: LaunchCheck;
   preview: PlanPreview;
+  /** What is stored for the settings that take a standard value when they are saved blank. */
+  stored: StandardFormValues | null;
 }
 
 type FieldErrors = Record<string, string>;
@@ -145,22 +153,6 @@ function modelParams(
   return out;
 }
 
-/** Wall-clock "YYYY-MM-DDTHH:mm" plus whole days, without involving any timezone. */
-function addDays(local: string, days: number): string | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local);
-  if (!match) return null;
-  const date = new Date(
-    Date.UTC(
-      Number(match[1]),
-      Number(match[2]) - 1,
-      Number(match[3]) + days,
-      Number(match[4]),
-      Number(match[5]),
-    ),
-  );
-  return date.toISOString().slice(0, 16);
-}
-
 /**
  * Saves the working copy of a campaign and returns the launch check and workload estimate for
  * what was saved. Saving never starts paid work: only the explicit Launch action does.
@@ -180,35 +172,7 @@ export async function saveCampaignDraft(
   if (timezone && !isValidTimeZone(timezone)) errors.timezone = "Choose a valid IANA timezone.";
   const zone = timezone && isValidTimeZone(timezone) ? timezone : null;
 
-  let startAt: string | null = null;
-  let endAt: string | null = null;
-  if (input.start_local) {
-    if (!zone) errors.timezone ??= "Choose the campaign timezone before setting times.";
-    else {
-      const start = zonedInputToUtc(input.start_local, zone);
-      if (!start) errors.start_at = "Enter a valid start date and time.";
-      else startAt = start.toISOString();
-    }
-  }
-  const endMode = input.end_mode === "duration" ? "duration" : "end_time";
-  let endLocal = input.end_local;
-  if (endMode === "duration") {
-    const days = wholeNumber(input.duration_days, "end_at", errors);
-    if (days !== null && (days < 1 || days > 1095))
-      errors.end_at = "Enter a duration between 1 and 1095 days.";
-    endLocal =
-      days !== null && input.start_local && !errors.end_at
-        ? (addDays(input.start_local, days) ?? "")
-        : "";
-    if (days !== null && !input.start_local)
-      errors.start_at ??= "Enter a start time so the duration can be applied.";
-  }
-  if (endLocal && zone) {
-    const end = zonedInputToUtc(endLocal, zone);
-    if (!end) errors.end_at = "Enter a valid end date and time.";
-    else endAt = end.toISOString();
-  }
-  if (startAt && endAt && endAt <= startAt) errors.end_at = "The end must be after the start.";
+  const schedule = resolveSchedule(input, zone, errors);
 
   const activeStart = minutes(input.active_start, "active_hours", errors);
   const activeEnd = minutes(input.active_end, "active_hours", errors);
@@ -238,9 +202,7 @@ export async function saveCampaignDraft(
     check_max_output_tokens: input.check_same_model
       ? null
       : wholeNumber(input.check_max_output_tokens, "check_max_output_tokens", errors),
-    start_at: startAt,
-    end_at: endAt,
-    schedule_end_mode: endMode,
+    ...schedule,
     timezone: zone,
     active_weekdays: input.active_weekdays.length
       ? [...new Set(input.active_weekdays)].filter(
@@ -304,9 +266,15 @@ export async function saveCampaignDraft(
   });
   if (saved.error) return fromDbError(saved.error);
 
-  const [check, preview] = await Promise.all([
+  const [check, preview, stored] = await Promise.all([
     supabase.rpc("campaign_launch_check", { p_campaign_id: campaignId }),
     supabase.rpc("campaign_plan_preview", { p_campaign_id: campaignId }),
+    // A setting saved blank takes its standard value: read back what the form should now show.
+    supabase
+      .from("campaign_revisions")
+      .select(STANDARD_VALUE_COLUMNS)
+      .eq("id", saved.data as string)
+      .maybeSingle(),
   ]);
   if (check.error) return fromDbError(check.error);
   if (preview.error) return fromDbError(preview.error);
@@ -317,8 +285,28 @@ export async function saveCampaignDraft(
       revisionId: saved.data as string,
       check: check.data as unknown as LaunchCheck,
       preview: preview.data as unknown as PlanPreview,
+      // The draft itself was saved, so a failed read here only leaves the blanks as they were.
+      stored: stored.data ? toStandardFormValues(stored.data) : null,
     },
   };
+}
+
+/**
+ * Gives a draft that has no timezone the one the browser reports. It never replaces a timezone,
+ * and the person can change it in the editor like any other setting.
+ */
+export async function suggestCampaignTimezone(
+  campaignId: string,
+  timezone: string,
+): Promise<boolean> {
+  if (!isUuid(campaignId) || !isValidTimeZone(timezone)) return false;
+  if (!(await getIdentity())) return false;
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("suggest_campaign_timezone", {
+    p_campaign_id: campaignId,
+    p_timezone: timezone,
+  });
+  return !error && data === true;
 }
 
 export async function discardCampaignDraft(campaignId: string): Promise<ActionResult> {

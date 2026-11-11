@@ -431,7 +431,10 @@ async function Usage({ searchParams }: { searchParams: Promise<SearchParams> }) 
                           label={`Total budget used by ${campaign.name}`}
                         />
                         <p className="tabular text-ink-muted mt-1 text-xs">
-                          Today: {formatUsd(today_)} of {formatUsd(campaign.daily_budget_usd)}
+                          Today: {formatUsd(today_)}{" "}
+                          {campaign.daily_budget_usd === null
+                            ? "(no daily limit)"
+                            : `of ${formatUsd(campaign.daily_budget_usd)}`}
                           {campaign.budget_skips > 0
                             ? ` · ${formatNumber(campaign.budget_skips)} slots skipped for budget`
                             : ""}

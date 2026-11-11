@@ -141,9 +141,9 @@ export function ConfigSummary({
                 term: "Other accepted domains",
                 value: revision.domain_aliases.length ? revision.domain_aliases.join(", ") : "None",
               },
-              { term: "Category or topic", value: revision.category ?? UNSET },
+              { term: "Category or topic", value: revision.category ?? "None" },
               { term: "Market or location", value: revision.location ?? "None" },
-              { term: "Language", value: revision.language ?? UNSET },
+              { term: "Language", value: revision.language ?? "None" },
             ]}
           />
         </CardBody>
@@ -223,11 +223,18 @@ export function ConfigSummary({
               { term: "Timezone", value: zone ?? UNSET },
               {
                 term: "Start",
-                value: revision.start_at ? formatDateTime(revision.start_at, zone) : UNSET,
+                // A draft may leave the start open; a launched revision always has one.
+                value: revision.start_at
+                  ? formatDateTime(revision.start_at, zone)
+                  : "When you launch",
               },
               {
                 term: "End",
-                value: revision.end_at ? formatDateTime(revision.end_at, zone) : UNSET,
+                value: revision.end_at
+                  ? formatDateTime(revision.end_at, zone)
+                  : revision.schedule_end_mode === "duration" && revision.duration_days
+                    ? `${formatNumber(revision.duration_days)} day${revision.duration_days === 1 ? "" : "s"} after the start`
+                    : UNSET,
               },
               { term: "Active days", value: describeWeekdays(revision.active_weekdays) },
               {
@@ -333,8 +340,9 @@ export function ConfigSummary({
           ) : null}
           {checksOn || probeSet ? null : (
             <p className="text-ink-muted text-[13px]">
-              <Badge tone="warn">Off</Badge> No fresh checks are configured, so this campaign would
-              have no independent measurement.
+              <Badge tone="neutral">Off</Badge> Fresh checks are optional. Every conversation still
+              records whether its first answer already named the business; fresh checks add a
+              before-and-after comparison from brand-new chats that say nothing about it.
             </p>
           )}
         </CardBody>
@@ -352,7 +360,7 @@ export function ConfigSummary({
                 term: "Daily budget",
                 value: revision.daily_budget_usd
                   ? `${formatUsd(revision.daily_budget_usd)} per day in ${zone ?? "the campaign timezone"}`
-                  : UNSET,
+                  : "No separate daily limit",
               },
               {
                 term: "Total budget",

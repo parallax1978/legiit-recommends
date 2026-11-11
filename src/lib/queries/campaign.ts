@@ -186,7 +186,9 @@ export function toDraftInput(
     start_local: startLocal,
     end_mode: revision.schedule_end_mode,
     end_local: endLocal,
-    duration_days: revision.schedule_end_mode === "duration" && days !== null ? String(days) : "",
+    // The stored length; revisions saved before it was stored carry it only as end minus start.
+    duration_days:
+      revision.schedule_end_mode === "duration" ? text(revision.duration_days ?? days) : "",
     active_weekdays: revision.active_weekdays ?? [],
     active_start: minutesToTime(revision.active_start_minute),
     active_end: minutesToTime(revision.active_end_minute),

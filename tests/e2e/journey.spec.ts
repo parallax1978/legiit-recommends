@@ -238,21 +238,42 @@ test("campaign setup starts empty, saves as a draft and shows the planned worklo
   await expect(page).toHaveURL(/\/campaigns\/[0-9a-f-]+\/edit/);
   campaignPath = new URL(page.url()).pathname.replace(/\/edit$/, "");
 
-  // Nothing is prepopulated: no business, schedule, volume or budget.
+  // Nothing about the campaign itself is prepopulated: no business, start, length, volume or
+  // budget.
   for (const id of [
     "#c-business",
     "#c-website",
     "#c-category",
-    "#c-timezone",
     "#c-start",
+    "#c-duration",
     "#c-per-day",
     "#c-total-limit",
     "#c-daily-budget",
     "#c-total-budget",
-    "#c-baseline",
   ]) {
     await expect(page.locator(id), `${id} should start empty`).toHaveValue("");
   }
+  // The settings that have a standard value show it, and fresh checks are off.
+  for (const [id, value] of [
+    ["#c-existing", "continue"],
+    ["#c-active-start", "00:00"],
+    ["#c-active-end", "24:00"],
+    ["#c-concurrency", "1"],
+    ["#c-missed", "skip"],
+    ["#c-baseline", "0"],
+    ["#c-daily", "0"],
+    ["#c-final", "0"],
+  ] as const) {
+    await expect(page.locator(id), `${id} should show its standard value`).toHaveValue(value);
+  }
+  // They are folded away until asked for.
+  await expect(page.getByRole("checkbox", { name: "Monday" })).toHaveCount(0);
+  await page.locator("summary", { hasText: "More schedule settings" }).click();
+  for (const day of ["Monday", "Sunday"])
+    await expect(page.getByRole("checkbox", { name: day })).toBeChecked();
+  // The timezone is the browser's until another is entered.
+  const browserZone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  await expect(page.locator("#c-timezone")).toHaveValue(browserZone);
   await expect(page.getByText("No wording chosen for this step yet.")).toHaveCount(3);
 
   await page.locator("#c-business").fill(BUSINESS.name);
@@ -278,6 +299,8 @@ test("campaign setup starts empty, saves as a draft and shows the planned worklo
   await page.locator("#c-existing").selectOption("continue");
   await page.locator("#c-connection").selectOption({ label: "Main project" });
   await page.locator("#c-model").selectOption(MODEL);
+  // Choosing a model brings the standard output cap, which can be changed.
+  await expect(page.locator("#model-max-output")).toHaveValue("2000");
   await page.locator("#model-max-output").fill("600");
   await page.locator("#c-timezone").fill(ZONE);
   await page.locator("#c-start").fill(localInput(ZONE, 0));

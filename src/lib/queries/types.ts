@@ -106,6 +106,15 @@ export interface PlanPreview {
   start_at: string | null;
   end_at: string | null;
   timezone: string | null;
+  /** True while a draft leaves its start to the moment of launch. */
+  starts_at_launch: boolean;
+  schedule_end_mode: string;
+  duration_days: number | null;
+  /** What the plan assumed: the stored times, or a launch at the moment it was computed. */
+  planned_start_at: string | null;
+  planned_end_at: string | null;
+  /** The first point of the daily grid inside the campaign, when one is planned. */
+  first_conversation_at: string | null;
 }
 
 export interface Problem {

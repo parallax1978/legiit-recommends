@@ -17,6 +17,13 @@ import {
   formatChartValue,
 } from "@/components/charts/theme";
 import { ID_CHUNK, PAGE_SIZE, inChunks, rowsOf, selectAll } from "@/lib/batch";
+import {
+  STANDARD_OUTPUT_CAP,
+  fillBlanks,
+  standardOutputCap,
+  toStandardFormValues,
+} from "@/lib/campaign-defaults";
+import { resolveSchedule } from "@/lib/campaign-schedule";
 import { first, likePattern, pageNumber, uuidParam } from "@/lib/params";
 import { signInFailure } from "@/lib/sign-in-failure";
 import { sessionCookieOptions } from "@/lib/supabase/env";
@@ -468,5 +475,152 @@ describe("session cookie", () => {
     for (const plain of ["http", "http:", "http,https", "", null, undefined]) {
       expect(sessionCookieOptions(plain)).toEqual({ secure: false });
     }
+  });
+});
+
+describe("campaign schedule from the form", () => {
+  const blank = { start_local: "", end_mode: "duration", end_local: "", duration_days: "" };
+  const resolve = (fields: Partial<typeof blank>, zone: string | null = "America/Chicago") => {
+    const errors: Record<string, string> = {};
+    return { stored: resolveSchedule({ ...blank, ...fields }, zone, errors), errors };
+  };
+
+  it("keeps a length in days as a number when the start is left to the launch", () => {
+    const { stored, errors } = resolve({ duration_days: "14" });
+    expect(errors).toEqual({});
+    expect(stored).toEqual({
+      start_at: null,
+      end_at: null,
+      schedule_end_mode: "duration",
+      duration_days: 14,
+    });
+    // No timezone is needed to say "14 days from the launch".
+    expect(resolve({ duration_days: "14" }, null)).toEqual({ stored, errors: {} });
+  });
+
+  it("leaves the end of a length in days to the database even when a start is given", () => {
+    // The database counts the days on the campaign's own clock; a second copy of that
+    // arithmetic here could disagree with it across a daylight-saving change.
+    const { stored, errors } = resolve({ start_local: "2026-10-31T09:00", duration_days: "3" });
+    expect(errors).toEqual({});
+    expect(stored).toEqual({
+      start_at: "2026-10-31T14:00:00.000Z",
+      end_at: null,
+      schedule_end_mode: "duration",
+      duration_days: 3,
+    });
+    // An end date left over from the other mode is not sent along.
+    expect(
+      resolve({
+        start_local: "2026-10-31T09:00",
+        duration_days: "3",
+        end_local: "2026-12-01T00:00",
+      }).stored.end_at,
+    ).toBeNull();
+  });
+
+  it("accepts an end date with or without a start", () => {
+    expect(resolve({ end_mode: "end_time", end_local: "2026-11-20T18:00" }).stored).toEqual({
+      start_at: null,
+      end_at: "2026-11-21T00:00:00.000Z",
+      schedule_end_mode: "end_time",
+      duration_days: null,
+    });
+    const both = resolve({
+      end_mode: "end_time",
+      start_local: "2026-11-12T09:30",
+      end_local: "2026-11-20T18:00",
+      // A length left over from the other mode is not stored with an end date.
+      duration_days: "9",
+    });
+    expect(both.errors).toEqual({});
+    expect(both.stored.duration_days).toBeNull();
+    expect(both.stored.start_at).toBe("2026-11-12T15:30:00.000Z");
+  });
+
+  it("reports what cannot be stored under the field it belongs to", () => {
+    expect(resolve({ duration_days: "0" }).errors).toEqual({
+      end_at: "Enter a duration between 1 and 1095 days.",
+    });
+    expect(resolve({ duration_days: "2000" }).errors.end_at).toBeDefined();
+    expect(resolve({ duration_days: "1.5" }).errors).toEqual({ end_at: "Enter a whole number." });
+    expect(
+      resolve({
+        end_mode: "end_time",
+        start_local: "2026-11-20T18:00",
+        end_local: "2026-11-12T09:30",
+      }).errors,
+    ).toEqual({ end_at: "The end must be after the start." });
+    // A date and time mean nothing without a timezone; a blank schedule needs none.
+    expect(resolve({ start_local: "2026-11-12T09:30", duration_days: "3" }, null).errors).toEqual({
+      timezone: "Choose the campaign timezone before setting times.",
+    });
+    expect(resolve({ end_mode: "end_time", end_local: "2026-11-20T18:00" }, null).errors).toEqual({
+      timezone: "Choose the campaign timezone before setting times.",
+    });
+    expect(resolve({}, null)).toEqual({
+      stored: { start_at: null, end_at: null, schedule_end_mode: "duration", duration_days: null },
+      errors: {},
+    });
+  });
+});
+
+describe("standard campaign values in the form", () => {
+  it("caps the standard output cap at what the model was verified for", () => {
+    expect(STANDARD_OUTPUT_CAP).toBe(2000);
+    expect(standardOutputCap(600)).toBe(600);
+    expect(standardOutputCap(2000)).toBe(2000);
+    expect(standardOutputCap(100_000)).toBe(2000);
+  });
+
+  it("shows stored values the way the form holds them", () => {
+    expect(
+      toStandardFormValues({
+        active_weekdays: [1, 2, 3, 4, 5, 6, 7],
+        active_start_minute: 0,
+        active_end_minute: 1440,
+        max_concurrency: 1,
+        missed_slot_behavior: "skip",
+        on_existing_inclusion: "continue",
+        baseline_samples: 0,
+        daily_checks: 0,
+        final_samples: 0,
+        max_output_tokens: null,
+      }),
+    ).toEqual({
+      active_weekdays: [1, 2, 3, 4, 5, 6, 7],
+      active_start: "00:00",
+      active_end: "24:00",
+      max_concurrency: "1",
+      missed_slot_behavior: "skip",
+      on_existing_inclusion: "continue",
+      baseline_samples: "0",
+      daily_checks: "0",
+      final_samples: "0",
+      // No model chosen yet: the cap stays blank rather than becoming "null" or "0".
+      max_output_tokens: "",
+    });
+  });
+
+  it("fills only the fields that are blank and never replaces what was typed", () => {
+    const form = {
+      max_concurrency: "",
+      active_weekdays: [] as number[],
+      daily_checks: "5",
+      name: "",
+    };
+    const filled = fillBlanks(form, {
+      max_concurrency: "1",
+      active_weekdays: [1, 2, 3, 4, 5, 6, 7],
+      daily_checks: "0",
+    });
+    expect(filled).toEqual({
+      max_concurrency: "1",
+      active_weekdays: [1, 2, 3, 4, 5, 6, 7],
+      daily_checks: "5",
+      name: "",
+    });
+    // The form that was passed in is left as it was.
+    expect(form.max_concurrency).toBe("");
   });
 });
