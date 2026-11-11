@@ -180,6 +180,21 @@ describe("what a campaign needs before launch", () => {
       duration_days: 3,
     });
 
+    // What a launch would write, asked for a fixed moment so that the three days cross New
+    // York's change to summer time (14 March 2027): the launch to the minute, and the same
+    // hour on the campaign's own clock three days later. That is 71 hours, not 72.
+    const [settled] = await sql<{ start_at: Date; end_at: Date }>(
+      `select s.start_at, s.end_at
+       from public.campaign_revisions r
+       cross join lateral app_private.effective_schedule(r, $2::timestamptz) s
+       where r.id = $1`,
+      [campaign.revisionId, "2027-03-12T14:00:30Z"],
+    );
+    expect(settled).toEqual({
+      start_at: new Date("2027-03-12T14:00:00Z"),
+      end_at: new Date("2027-03-15T13:00:00Z"),
+    });
+
     const before = Date.now();
     await launch(workspace, campaign);
     const after = Date.now();

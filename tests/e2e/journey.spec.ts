@@ -83,7 +83,9 @@ test("the owner connects the provider, records prices and verifies a model", asy
 
   // A model without a recorded price cannot be verified: its cost could not be reserved.
   await page.locator("#model_id").selectOption(MODEL);
-  await page.locator("#max_output_tokens").fill("2000");
+  // Not 2,000, the ceiling of the standard cap: what a campaign later shows for this model
+  // can then only have come from what the model was verified for.
+  await page.locator("#max_output_tokens").fill("1500");
   await page.getByRole("button", { name: "Verify model" }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "No price is recorded for model" }),
@@ -101,7 +103,9 @@ test("the owner connects the provider, records prices and verifies a model", asy
 
   await page.goto("/settings?tab=connections");
   await page.locator("#model_id").selectOption(MODEL);
-  await page.locator("#max_output_tokens").fill("2000");
+  // Not 2,000, the ceiling of the standard cap: what a campaign later shows for this model
+  // can then only have come from what the model was verified for.
+  await page.locator("#max_output_tokens").fill("1500");
   await page.getByRole("button", { name: "Verify model" }).click();
   await expect(
     page.locator("li").filter({ hasText: MODEL }).filter({ hasText: "Verified" }).first(),
@@ -266,6 +270,8 @@ test("campaign setup starts empty, saves as a draft and shows the planned worklo
   ] as const) {
     await expect(page.locator(id), `${id} should show its standard value`).toHaveValue(value);
   }
+  // Fresh checks are off, and the form says in plain words what they are.
+  await expect(page.getByText(/A fresh check asks one question in a brand-new chat/)).toBeVisible();
   // They are folded away until asked for.
   await expect(page.getByRole("checkbox", { name: "Monday" })).toHaveCount(0);
   await page.locator("summary", { hasText: "More schedule settings" }).click();
@@ -299,8 +305,18 @@ test("campaign setup starts empty, saves as a draft and shows the planned worklo
   await page.locator("#c-existing").selectOption("continue");
   await page.locator("#c-connection").selectOption({ label: "Main project" });
   await page.locator("#c-model").selectOption(MODEL);
-  // Choosing a model brings the standard output cap, which can be changed.
-  await expect(page.locator("#model-max-output")).toHaveValue("2000");
+  // Choosing a model brings the standard output cap: what the model was verified for.
+  await expect(page.locator("#model-max-output")).toHaveValue("1500");
+  // A cap above that is replaced when the model is chosen.
+  await page.locator("#model-max-output").fill("9000");
+  await page.locator("#c-model").selectOption({ index: 0 });
+  await page.locator("#c-model").selectOption(MODEL);
+  await expect(page.locator("#model-max-output")).toHaveValue("1500");
+  // Saved blank, the cap comes back as the stored standard value.
+  await page.locator("#model-max-output").fill("");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.locator("#model-max-output")).toHaveValue("1500");
+  // And it can be changed.
   await page.locator("#model-max-output").fill("600");
   await page.locator("#c-timezone").fill(ZONE);
   await page.locator("#c-start").fill(localInput(ZONE, 0));

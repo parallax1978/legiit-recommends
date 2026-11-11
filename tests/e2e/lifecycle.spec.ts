@@ -298,7 +298,7 @@ test("a new campaign launches on three answers: how long, how many a day, and a 
   }
   await page.locator("#c-connection").selectOption({ label: "Main project" });
   await page.locator("#c-model").selectOption("fake-chat-1");
-  await expect(page.locator("#model-max-output")).toHaveValue("2000");
+  await expect(page.locator("#model-max-output")).toHaveValue("1500");
 
   // Fresh checks stay off, but their question set is one click away: it is made from the
   // campaign's own question and chosen, without leaving the form.
@@ -346,7 +346,7 @@ test("a new campaign launches on three answers: how long, how many a day, and a 
     timezone: browserZone,
     max_concurrency: 1,
     missed_slot_behavior: "skip",
-    max_output_tokens: 2000,
+    max_output_tokens: 1500,
     daily_budget_usd: null,
     category: null,
     language: null,
