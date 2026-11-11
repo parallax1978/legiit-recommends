@@ -99,10 +99,12 @@ export async function requestPasswordReset(
     // be used to learn which addresses have an account.
     console.error(JSON.stringify({ event: "password_reset_email_failed", code: error.code }));
   }
-  // The built-in email sender only delivers to a few addresses and a few times an hour, so
-  // "on its way" would often be untrue. Say what to do when nothing arrives.
+  // The reply cannot promise delivery, because it has to read the same when the send was
+  // refused: Supabase's built-in email service delivers only to the project's Supabase team
+  // and twice an hour, and every sender has an hourly limit. Say what to do when nothing
+  // arrives.
   return ok(
-    "If an account exists for that address, a reset link has been requested. If nothing arrives within a few minutes, email delivery is not set up for it: ask whoever operates this installation for a one-time sign-in link.",
+    "If an account exists for that address, a reset link has been requested. It can take a few minutes and may land in spam. The number of emails per hour is limited, so asking again straight away will not help. If nothing arrives, whoever operates this installation can give you a one-time sign-in link.",
   );
 }
 

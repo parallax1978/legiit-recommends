@@ -119,8 +119,8 @@ function ProfileTab({ session }: { session: Session }) {
             >
               Forgot your password
             </Link>{" "}
-            to request a reset link by email. If email delivery is not set up for your address,
-            whoever operates this installation can give you a one-time sign-in link instead.
+            to request a reset link by email. If the email does not arrive, whoever operates this
+            installation can give you a one-time sign-in link instead.
           </p>
         </CardBody>
       </Card>

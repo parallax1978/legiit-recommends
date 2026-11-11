@@ -246,10 +246,38 @@ address from the Site URL, and no emailed link carries a redirect, so the redire
 never consulted. `auth:configure -- --check` will report those two as different after each
 deployment; the next `deploy:supabase` sets them back.
 
-Supabase's built-in email sender is limited to a couple of emails an hour and only delivers to
-members of the project's Supabase organization. Until you configure your own SMTP provider
-under **Authentication → Emails**, invitations to other people and password-reset emails will
-usually not arrive. The owner does not need email at all (next step); inviting anyone else does.
+#### Email
+
+Supabase Auth sends the invitation and password-reset emails. Every hosted project starts on
+Supabase's **built-in email service**. It needs no setup and it does send, within limits that
+Supabase sets on purpose (it is there for trying Auth out, not for production use):
+
+- It delivers **only to the people on the project's Supabase team**: the members of its
+  Supabase organization, at the address of their Supabase account. For a project created
+  through Vercel's Supabase integration, those accounts belong to the people in the Vercel
+  team (normally under their Vercel email address). Any other address is refused
+  (`email_address_not_authorized`): an invitation to it fails with "… cannot be used as it is
+  not authorized", and a reset email for it is not sent.
+- It sends **2 emails an hour** for the whole project.
+- According to Supabase's announcement of 3 June 2026, a **Free-plan project created after
+  that date** sends Supabase's standard emails through this service instead of the templates
+  above. This app completes only its own links (`/auth/confirm?token_hash=…`), so on such a
+  project the emails arrive but their links let nobody in until the project is on a paid plan
+  or has its own sender.
+
+So an owner whose address is on the Supabase team has working password-reset emails from the
+first deployment, with nothing to configure. Inviting anyone outside that team, or sending more
+than a couple of emails an hour, needs **the project's own sender**, entered under
+**Authentication → Emails → SMTP Settings**: the host, port, user name and password of an SMTP
+service, a From address that service lets you send from, and a sender name. Supabase then
+delivers to every address, 30 emails an hour to begin with (raise it under **Authentication →
+Rate Limits**). The deploy leaves these settings alone. Two usual sources of an SMTP login: a
+transactional email service (Resend, for one, can be added from the Vercel Marketplace and
+needs a domain of your own there; a `*.vercel.app` address cannot send mail), or a mailbox you
+already have that offers SMTP. A provider with an HTTP API only can be connected through
+Supabase's **Send Email hook** instead.
+
+Nobody needs email to get in as an owner: the next step prints a one-time link.
 
 ### 2. First owner
 
@@ -263,13 +291,15 @@ project it is acting on.)
 
 This grants that address the right to create one workspace and prints a one-time link. Open it
 in a browser to choose a password, then name the workspace. Nothing is emailed. Without
-`--link` the command sends a Supabase invitation email instead (needs working email delivery);
-with `OWNER_PASSWORD` set in the environment it creates the account with that password, which
-is how local development and the tests do it.
+`--link` the command sends a Supabase invitation email instead (it arrives only if the
+project's email sender may deliver to that address, see [Email](#email)); with `OWNER_PASSWORD`
+set in the environment it creates the account with that password, which is how local
+development and the tests do it.
 
 This is for owners only: every address it is run for may create its own workspace. Other people
-join an existing workspace through an invitation from **Settings → Members**, which needs
-working email delivery.
+join an existing workspace through an invitation from **Settings → Members**. That invitation
+is an email, so with the built-in email service it reaches only people on the project's
+Supabase team ([Email](#email)).
 
 The same command with `--link` is the way back in for an owner who is locked out: for an
 account that already has a password, the link resets it. An account that already existed for
@@ -453,7 +483,9 @@ project, so do not count on one for recovery. A new project always starts with
 | Budget reached                      | Raise the campaign or connection limit (or wait for the next day). Waiting jobs continue; skipped slots follow the campaign's missed-slot setting.                                                                                                                                                                                                                                                                             |
 | "Queue consumers are not activated" | Hosted: run `npm run deploy:supabase` (it installs one worker secret on both sides). Local stack: `npm run queues:activate`.                                                                                                                                                                                                                                                                                                   |
 | An owner cannot sign in             | `npm run bootstrap:owner -- --email <their address> --link` (with `ENV_FILE=…` for the hosted project) prints a one-time link that lets them choose a new password. No email is needed.                                                                                                                                                                                                                                        |
-| An email link says it has expired   | Links work once and for a limited time. Send a new invitation or reset email; for an owner without email delivery use the one-time link above.                                                                                                                                                                                                                                                                                 |
+| An email link says it has expired   | Links work once and for a limited time. Send a new invitation or reset email; for an owner the email cannot reach, use the one-time link above.                                                                                                                                                                                                                                                                                |
+| An invitation "is not authorized"   | The project is on Supabase's built-in email service, which delivers only to the people on the project's Supabase team. Give the project its own sender ([Email](#email)), then invite the person again.                                                                                                                                                                                                                        |
+| A reset email does not arrive       | The page gives the same reply whether or not an email went out. The built-in email service sends 2 emails an hour and only to the project's Supabase team: wait an hour before asking again, check spam, or use the one-time link for owners above. Addresses outside the team need the project's own sender ([Email](#email)).                                                                                                |
 | A migration fails during a deploy   | Through the Management API (the default) nothing was applied: the deployment is one transaction and the command names the failing file. When the request itself failed (too large, a gateway timeout, a lost reply) it says so, blames no file and reports what the project records. With `SUPABASE_DB_PASSWORD` (`supabase db push`), files before the failing one stay applied. Fix and run `npm run deploy:supabase` again. |
 | Scheduler heartbeat is stale        | `npm run queues:activate -- --status` (with your `ENV_FILE=…` for a hosted project) says which of `lr-plan`, `lr-dispatch` and `lr-maintenance` is missing or paused. Resume a paused one under Dashboard → Integrations → Cron. `npm run deploy:supabase` puts back a schedule that was removed; it never resumes a paused one.                                                                                               |
 
